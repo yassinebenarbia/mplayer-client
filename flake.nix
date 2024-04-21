@@ -15,7 +15,7 @@
       {
         defaultPackage = naersk-lib.buildPackage ./.;
         devShell = with pkgs; mkShell {
-          buildInputs = [ rustfmt pre-commit rustPackages.clippy unstable.rustc ];
+          buildInputs = [ unstable.rustc ];
         };
       });
 }
