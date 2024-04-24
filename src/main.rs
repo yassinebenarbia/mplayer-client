@@ -1,16 +1,18 @@
-use std::{io::{stdout, self}, time::Duration};
+use std::{io::{stdout, self}, time::Duration, path::PathBuf, pin::Pin};
 
+use async_std::task::block_on;
+use futures_util::Future;
 use zbus::{zvariant::ObjectPath, proxy, Connection, Result};
 mod ui;
 use crossterm::{
-    event::{self, Event, KeyCode},
+    event::{self, Event, KeyCode, KeyModifiers, KeyEvent},
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     ExecutableCommand,
 };
 use ratatui::{self, Terminal, backend::CrosstermBackend};
-use ratatui::widgets::TableState;
 
 use crate::ui::{Musics, Music};
+pub type AsyncFn = fn() -> Pin<Box<dyn Future<Output = ()> + Send>>;
 
 #[proxy(
     interface = "org.zbus.mplayer1",
@@ -31,8 +33,8 @@ pub trait Server {
 
 #[async_std::main]
 async fn main() -> Result<()> {
-    // let connection = Connection::session().await?;
-    // let proxy = ServerProxy::new(&connection).await?;
+    let connection = Connection::session().await?;
+    let proxy = ServerProxy::new(&connection).await?;
     // proxy.play(String::from("/home/yassine/Music/ЗАВОД.mp3")).await?;
     // let thing = proxy.show().await?;
     // let time = proxy.timer().await?;
@@ -45,11 +47,10 @@ async fn main() -> Result<()> {
     stdout().execute(EnterAlternateScreen)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
 
-    let mut ui = ui::UI::default();
+    let mut ui = ui::UI::default(proxy);
     let musics:Musics = Musics::new(vec![
-            Music::new(String::from("The state of art"), Duration::from_secs(10)),
-            Music::new(String::from("What Art"), Duration::from_secs(20)),
-            Music::new(String::from("It's just - ART"), Duration::from_secs(30)),
+            Music::new(PathBuf::from("/home/yassine/Programming/Rust/mplayer-client/assets/sample-3s.mp3"),
+            Duration::from_secs(10)),
     ]);
 
     ui.musics(musics);
@@ -67,7 +68,9 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn handle_events(ui: &mut ui::UI) -> io::Result<bool> {
+fn update_selected_region(ui: &mut ui::UI, key: KeyEvent) {}
+
+fn handle_events<'a>(ui: &mut ui::UI<'a>) -> io::Result<bool>{
     // ALT + <hjkl> should switch between regions
     // / should search song on the list region
     if event::poll(std::time::Duration::from_millis(50))? {
@@ -78,10 +81,18 @@ fn handle_events(ui: &mut ui::UI) -> io::Result<bool> {
                         return Ok(true);
                     }
                     if key.kind == event::KeyEventKind::Press && key.code == KeyCode::Char('k') {
-                        ui.list_up()
+                        if key.modifiers != KeyModifiers::ALT {
+                            ui.list_up()
+                        }else {
+                            ui.select_bar_region();
+                        }
                     }
                     if key.kind == event::KeyEventKind::Press && key.code == KeyCode::Char('j') {
-                        ui.list_down()
+                        if key.modifiers != KeyModifiers::ALT {
+                            ui.list_down();
+                        }else {
+                            ui.select_action_region();
+                        }
                     }
                 },
                 ui::Region::Bar => {
@@ -94,10 +105,42 @@ fn handle_events(ui: &mut ui::UI) -> io::Result<bool> {
                     if key.kind == event::KeyEventKind::Press && key.code == KeyCode::Char('h') {
                         ui.previous_5s()
                     }
+                    if key.kind == event::KeyEventKind::Press 
+                        && key.code == KeyCode::Char('j') && key.modifiers == KeyModifiers::ALT {
+                            ui.select_list_region();
+                    }
+                    if key.kind == event::KeyEventKind::Press 
+                        && key.code == KeyCode::Char('k') && key.modifiers == KeyModifiers::ALT {
+                            ui.select_action_region();
+                    }
                 } ,
-                ui::Region::Action => {},
+                ui::Region::Action => {
+                    if key.kind == event::KeyEventKind::Press && key.code == KeyCode::Char('q') {
+                        return Ok(true);
+                    }
+                    if key.kind == event::KeyEventKind::Press 
+                        && key.code == KeyCode::Char('j') && key.modifiers == KeyModifiers::ALT {
+                            ui.select_bar_region();
+                    }
+                    if key.kind == event::KeyEventKind::Press 
+                        && key.code == KeyCode::Char('k') && key.modifiers == KeyModifiers::ALT {
+                            ui.select_list_region();
+                    }
+
+                    if key.kind == event::KeyEventKind::Press && key.code == KeyCode::Char('l') {
+                        ui.next_action();
+                    }
+                    if key.kind == event::KeyEventKind::Press && key.code == KeyCode::Char('h') {
+                        ui.previous_action();
+                    }
+
+                    if key.kind == event::KeyEventKind::Press &&
+                        key.code == KeyCode::Char(' ') || key.code == KeyCode::Enter {
+                        block_on(ui.preform_action());
+                    }
+                },
             }
         }
     }
-    Ok(false)
+    return Ok(false);
 }
