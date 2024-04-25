@@ -12,7 +12,6 @@ use crossterm::{
 use ratatui::{self, Terminal, backend::CrosstermBackend};
 
 use crate::ui::{Musics, Music};
-pub type AsyncFn = fn() -> Pin<Box<dyn Future<Output = ()> + Send>>;
 
 #[proxy(
     interface = "org.zbus.mplayer1",
@@ -20,7 +19,7 @@ pub type AsyncFn = fn() -> Pin<Box<dyn Future<Output = ()> + Send>>;
     default_path = "/org/zbus/mplayer"
 )]
 pub trait Server {
-    fn status(&self) -> Result<bool>;
+    fn status(&self) -> Result<String>;
     fn play(&self, path: String) -> Result<bool>;
     fn end(&self) -> Result<bool>;
     fn resume(&self) -> Result<bool>;
@@ -35,13 +34,6 @@ pub trait Server {
 async fn main() -> Result<()> {
     let connection = Connection::session().await?;
     let proxy = ServerProxy::new(&connection).await?;
-    // proxy.play(String::from("/home/yassine/Music/ЗАВОД.mp3")).await?;
-    // let thing = proxy.show().await?;
-    // let time = proxy.timer().await?;
-    //
-    // println!("{}", thing);
-    // println!("{}", time);
-    //
 
     enable_raw_mode()?;
     stdout().execute(EnterAlternateScreen)?;
@@ -50,7 +42,9 @@ async fn main() -> Result<()> {
     let mut ui = ui::UI::default(proxy);
     let musics:Musics = Musics::new(vec![
             Music::new(PathBuf::from("/home/yassine/Programming/Rust/mplayer-client/assets/sample-3s.mp3"),
-            Duration::from_secs(10)),
+            Duration::from_secs(3)),
+            Music::new(PathBuf::from("/home/yassine/Programming/Rust/mplayer-client/assets/sample3.mp3"),
+            Duration::from_secs(6)),
     ]);
 
     ui.musics(musics);
@@ -68,7 +62,6 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn update_selected_region(ui: &mut ui::UI, key: KeyEvent) {}
 
 fn handle_events<'a>(ui: &mut ui::UI<'a>) -> io::Result<bool>{
     // ALT + <hjkl> should switch between regions
@@ -94,16 +87,21 @@ fn handle_events<'a>(ui: &mut ui::UI<'a>) -> io::Result<bool>{
                             ui.select_action_region();
                         }
                     }
+
+                    if key.kind == event::KeyEventKind::Press &&
+                        key.code == KeyCode::Char(' ') || key.code == KeyCode::Enter {
+                        block_on(ui.play_song());
+                    }
                 },
                 ui::Region::Bar => {
                     if key.kind == event::KeyEventKind::Press && key.code == KeyCode::Char('q') {
                         return Ok(true);
                     }
                     if key.kind == event::KeyEventKind::Press && key.code == KeyCode::Char('l') {
-                        ui.next_5s()
+                        block_on(ui.next_5s())
                     }
                     if key.kind == event::KeyEventKind::Press && key.code == KeyCode::Char('h') {
-                        ui.previous_5s()
+                        block_on(ui.previous_5s())
                     }
                     if key.kind == event::KeyEventKind::Press 
                         && key.code == KeyCode::Char('j') && key.modifiers == KeyModifiers::ALT {

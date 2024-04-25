@@ -7,17 +7,29 @@ use crate::ServerProxy;
 
 
 pub struct UI<'a> {
+    /// list of all the musics to play
     pub music_list: Musics,
-    power_bar: PowerBar,
+    /// bar that indecate the playing timer
+    pub power_bar: PowerBar,
+    /// currently selected action 
+    action: PowerActions,
+    /// currently selected region
     pub region: Region,
-    pub region_progress: u16,
+    /// UI style
     pub style: UIStyle,
-    pub action: Action,
-    pub just_preformed_action: Action,
-    pub proxy: ServerProxy<'a>
+    /// last used action
+    just_preformed_action: Action,
+    /// proxy that communicates with the dbus server
+    pub proxy: ServerProxy<'a>,
+}
+
+/// all the possible actions with the play button
+enum Action {
+    Play, Pause, Resume, None
 }
 
 #[derive(Clone)]
+/// all the displayed region
 pub enum Region {
     List, Action, Bar
 }
@@ -35,12 +47,16 @@ pub struct UIStyle {
     action_style: ActionStyle
 }
 
-// #[derive(Default)]
-struct ListStyle {
+pub struct ListStyle {
     hilight_color: Color,
     active_region_color: Color,
     passive_region_color: Color,
     selector: String
+}
+
+struct BarStyle {
+    active_region_color: Color,
+    passive_region_color: Color,
 }
 
 impl Default for ListStyle {
@@ -66,10 +82,6 @@ impl UIStyle {
     }
 }
 
-struct BarStyle {
-    active_region_color: Color,
-    passive_region_color: Color,
-}
 
 impl Default for BarStyle {
     fn default() -> Self {
@@ -101,12 +113,11 @@ impl Default for ActionStyle {
 impl<'a> UI<'a>{
     pub fn default(proxy: ServerProxy<'a>) -> Self {
         UI {
-            region_progress: 0,
             power_bar: PowerBar::default(),
             music_list: Musics::default(),
             region: Region::default(),
             style : UIStyle::default(),
-            action: Action::Play,
+            action: PowerActions::Play,
             just_preformed_action: Action::Pause,
             proxy
         }
@@ -119,48 +130,106 @@ impl<'a> UI<'a>{
 
     pub fn previous_action(&mut self) {
         self.action = match self.action {
-            Action::Play =>  Action::Stop,
-            Action::Pause => Action::Play,
-            Action::BackwardSkip => Action::Pause,
-            Action::ForwardSkip => Action::BackwardSkip,
-            Action::Stop => Action::ForwardSkip,
+            PowerActions::Play =>  PowerActions::Stop,
+            PowerActions::Pause => PowerActions::Play,
+            PowerActions::BackwardSkip => PowerActions::Pause,
+            PowerActions::ForwardSkip => PowerActions::BackwardSkip,
+            PowerActions::Stop => PowerActions::ForwardSkip,
         }
+    }
+
+    //// returns the music player status <Playing|Pausing|Stopping>
+    pub fn status(&self) -> Status {
+        let status = block_on(self.proxy.status()).unwrap();
+        if status.contains("Stop") {
+            return Status::Stopping
+        } else if status.contains("Paus") {
+            return Status::Pausing
+        }else {
+            return Status::Playing
+        }
+    }
+
+    /// returns true if pausing is permissable, else false
+    pub fn can_pause(&mut self) -> bool {
+        // selected another song
+        if self.power_bar.song_name != 
+            self.music_list.que.get(self.music_list.selected).unwrap().title {
+                return false
+            }
+        return true
     }
 
     pub fn next_action(&mut self) {
         self.action = match self.action {
-            Action::Play =>  Action::Pause,
-            Action::Pause => Action::BackwardSkip,
-            Action::BackwardSkip => Action::ForwardSkip,
-            Action::ForwardSkip => Action::Stop,
-            Action::Stop => Action::Play,
+            PowerActions::Play =>  PowerActions::Pause,
+            PowerActions::Pause => PowerActions::BackwardSkip,
+            PowerActions::BackwardSkip => PowerActions::ForwardSkip,
+            PowerActions::ForwardSkip => PowerActions::Stop,
+            PowerActions::Stop => PowerActions::Play,
         }
     }
 
     pub async fn preform_action(&mut self) {
+        // match the selected action
         match self.action {
-            Action::Play => {
-                match self.just_preformed_action {
-                    Action::Pause => {
+            // if we are on the play button
+            PowerActions::Play => {
+                let selected_song = self.music_list.que.get(self.music_list.selected).unwrap();
+                // if the currently selected song different from the currently playing one
+                if self.power_bar.song_name != selected_song.title {
+                    self.just_preformed_action = Action::Play;
+                    let playing = self.music_list.que.get(self.music_list.selected).unwrap();
+                    self.proxy.play(playing.path.as_os_str().to_str().unwrap().to_string()).await;
+                    return
+                }
+                match self.status() {
+                    Status::Playing => {
+                        self.just_preformed_action = Action::Pause;
+                        self.proxy.pause().await;
+                    },
+                    Status::Pausing => {
+                        self.just_preformed_action = Action::Resume;
+                        self.proxy.resume().await;
+                    },
+                    Status::Stopping => {
                         self.just_preformed_action = Action::Play;
                         let playing = self.music_list.que.get(self.music_list.selected).unwrap();
                         self.proxy.play(playing.path.as_os_str().to_str().unwrap().to_string()).await;
-                    }
-                    Action::Play => {
-                        self.just_preformed_action = Action::Pause;
-                        self.proxy.pause();
-                    }
-                    _ => {}
+                    },
                 }
             },
-            Action::Pause => {
+            PowerActions::Pause => {
                 self.proxy.pause().await;
                 self.just_preformed_action = Action::Pause;
             },
-            Action::ForwardSkip => todo!(),
-            Action::BackwardSkip => todo!(),
-            Action::Stop => {
+            PowerActions::ForwardSkip => todo!(),
+            PowerActions::BackwardSkip => todo!(),
+            PowerActions::Stop => {
                 self.proxy.end().await;
+            },
+        }
+    }
+
+    pub async fn play_song(&mut self) {
+        match self.status() {
+            Status::Playing => {
+                self.proxy.end().await;
+                self.just_preformed_action = Action::Play;
+                let playing = self.music_list.que.get(self.music_list.selected).unwrap();
+                self.proxy.play(playing.path.as_os_str().to_str().unwrap().to_string()).await;
+            },
+            Status::Pausing => {
+                self.proxy.end().await;
+                self.proxy.resume().await;
+                self.just_preformed_action = Action::Play;
+                let playing = self.music_list.que.get(self.music_list.selected).unwrap();
+                self.proxy.play(playing.path.as_os_str().to_str().unwrap().to_string()).await;
+            },
+            Status::Stopping => {
+                self.just_preformed_action = Action::Play;
+                let playing = self.music_list.que.get(self.music_list.selected).unwrap();
+                self.proxy.play(playing.path.as_os_str().to_str().unwrap().to_string()).await;
             },
         }
     }
@@ -229,12 +298,37 @@ impl<'a> UI<'a>{
 
     fn get_action_index(&self) -> usize {
         return match self.action {
-            Action::Play => 0,
-            Action::Pause => 1,
-            Action::BackwardSkip => 2,
-            Action::ForwardSkip => 3,
-            Action::Stop => 4,
+            PowerActions::Play => 0,
+            PowerActions::Pause => 1,
+            PowerActions::BackwardSkip => 2,
+            PowerActions::ForwardSkip => 3,
+            PowerActions::Stop => 4,
         }
+    }
+
+    fn timer_to_string(&self, time: u64) -> String {
+        let seconds = time % 60;
+        let minities = time / 60;
+
+        let sseconds = if seconds > 10 {
+            format!("{}", seconds)
+        }else {
+            format!("0{}", seconds)
+        };
+
+        let sminutes = if minities> 10 {
+            format!("{}", minities)
+        }else {
+            format!("0{}", minities)
+        };
+
+        return format!("{sminutes}:{sseconds}")
+    }
+
+    fn timer(&mut self) -> String {
+        format!("{}/{}",
+               self.timer_to_string(self.power_bar.current_timer.as_secs()),
+               self.timer_to_string(self.power_bar.max_timer.as_secs()))
     }
 
     fn calculate_percent(&self) -> u16 {
@@ -253,7 +347,7 @@ impl<'a> UI<'a>{
         }
     }
 
-    pub fn next_5s(&mut self) {
+    pub async fn next_5s(&mut self) {
         let current = self.power_bar.current_timer.as_secs();
         let max = self.power_bar.max_timer.as_secs();
         if current + 5 < max {
@@ -265,9 +359,10 @@ impl<'a> UI<'a>{
             self.power_bar.max_timer = next_song.length;
             self.music_list.select_next_song()
         }
+        self.proxy.seek(5.0).await;
     }
 
-    pub fn previous_5s(&mut self) {
+    pub async fn previous_5s(&mut self) {
         let current = self.power_bar.current_timer.as_secs();
         match current.checked_sub(5) {
             Some(_) => {
@@ -281,6 +376,7 @@ impl<'a> UI<'a>{
                 self.music_list.select_previous_song();
             },
         }
+        self.proxy.seek(-5.0).await;
     }
 
     pub fn render_bar(&mut self, frame: &mut Frame) {
@@ -297,7 +393,7 @@ impl<'a> UI<'a>{
             }
         };
 
-        Gauge::default()
+        LineGauge::default()
             .block(Block::default().borders(Borders::ALL).title(
                     selected_music.title.to_owned()))
             .style(style)
@@ -307,7 +403,9 @@ impl<'a> UI<'a>{
                 .bg(Color::Black)
                 .add_modifier(Modifier::ITALIC)
                 )
-            .percent(self.calculate_percent())
+            .label(self.timer())
+            .ratio(self.calculate_percent() as f64 / 100.0)
+            // .percent(self.calculate_percent())
             .render(area, frame.buffer_mut());
     }
 
@@ -325,8 +423,10 @@ impl<'a> UI<'a>{
             }
         };
 
-        Tabs::new(vec!["⏵", "⏸", "⏮", "⏭", "⏹"])
-            .block(Block::default().title("Tabs").borders(Borders::ALL))
+        Tabs::new(vec!["⏵", "⏮", "⏭", "⏹"])
+            .block(
+                Block::default().title("Actions").borders(Borders::ALL)
+                )
             .style(style)
             .highlight_style(
                 Style::default()
@@ -338,18 +438,29 @@ impl<'a> UI<'a>{
             .render(area, frame.buffer_mut());
     }
 
+
     pub fn render(&mut self, frame: &mut Frame) {
-        self.render_list(frame);
-        self.render_bar(frame);
-        self.render_actions(frame);
         self.update_state();
+        self.render_bar(frame);
+        self.render_list(frame);
+        self.render_actions(frame);
     }
 
     pub fn update_state(&mut self) {
-        let thing = block_on(self.proxy.show()).unwrap();
-        println!("{:#?}", thing);
+        let time = block_on(self.proxy.timer()).unwrap();
+        let times = time.splitn(2, "/").collect::<Vec<&str>>();
+        let max_time = times.get(0).unwrap().to_owned();
+        let current_time = times.get(1).unwrap().to_owned();
+        let max_time = max_time.parse::<f32>().unwrap();
+        let current_time = current_time.parse::<f32>().unwrap();
+        self.power_bar.max_timer = Duration::from_secs_f32(max_time);
+        self.power_bar.current_timer = Duration::from_secs_f32(current_time);
+
+        self.power_bar.song_name =
+            self.music_list.que.get(self.music_list.selected).unwrap().title.clone();
     }
 
+    /// selectes the upper element from the list
     pub fn list_up(&mut self) {
         let quesize = self.music_list.que.len();
         match self.music_list.state.selected() {
@@ -357,6 +468,7 @@ impl<'a> UI<'a>{
                 if index == 0 {
                     self.music_list.state.select(Some(quesize))
                 }else {
+                    self.music_list.selected = self.music_list.selected - 1;
                     self.music_list.state.select(Some(index - 1))
                 }
             },
@@ -371,6 +483,7 @@ impl<'a> UI<'a>{
                 if index == quesize {
                     self.music_list.state.select(Some(0))
                 }else {
+                    self.music_list.selected = self.music_list.selected + 1;
                     self.music_list.state.select(Some(index + 1))
                 }
             },
@@ -480,10 +593,14 @@ impl From<Musics> for PowerBar {
     }
 }
 
-enum Action {
+enum PowerActions {
     Play,
     Pause,
     ForwardSkip,
     BackwardSkip,
     Stop
+}
+
+pub enum Status {
+    Playing, Pausing, Stopping
 }
