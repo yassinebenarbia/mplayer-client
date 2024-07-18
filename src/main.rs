@@ -12,6 +12,7 @@ use crossterm::{
 use ratatui::{self, Terminal, backend::CrosstermBackend};
 
 use crate::ui::{Musics, Music};
+use create::utils;
 
 #[proxy(
     interface = "org.zbus.mplayer1",
