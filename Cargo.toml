@@ -7,8 +7,16 @@ edition = "2021"
 
 [dependencies]
 async-std = {version = "1.12.0", features = ["attributes"]}
+audiotags = "0.5.0"
+basic-toml = "0.1.9"
+clear = "0.1.0"
 crossterm = "0.27.0"
 event-listener = "5.2.0"
+ffprobe = "0.4.0"
 futures-util = "0.3.30"
+lofty = "0.21.0"
 ratatui = "0.26.2"
+rust-fuzzy-search = "0.1.1"
+serde = "1.0.204"
+yaml-rust = "0.4.5"
 zbus = "4.1.2"

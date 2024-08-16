@@ -2,3 +2,5 @@
 Cargo.lock
 /assets
 tmp
+config.toml
+config.yaml
