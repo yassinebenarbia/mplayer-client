@@ -1,6 +1,11 @@
 use std::fs::OpenOptions;
 use std::io::prelude::*;
 
+pub trait StringFeatures {
+    /// insert [content] if the requested [String] is empty
+    fn insert_if_empty(&mut self, content: &str);
+}
+
 /// logs _data_ to a _file_ in a incremantive manner
 /// 
 /// Panics: 
@@ -13,3 +18,12 @@ pub fn log(data: &str, filename: &str) -> std::io::Result<std::fs::File>{
     writeln!(f, "{}", data)?;
     return std::io::Result::Ok(f)
 }
+
+impl StringFeatures for String {
+    fn insert_if_empty(&mut self, content: &str) {
+       if self.is_empty() {
+           self.push_str(content);
+       } 
+    }
+}
+

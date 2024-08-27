@@ -25,5 +25,11 @@
 |Actions|Normal|`Space` or `Enter`|Toggle the action under selection|
 |List|Normal|`Alt + j`|Select the `Seeker` regin (move region down)|
 |List|Normal|`Alt + k`|Select the `List` regin (move region up)|
-|Seeker|Play|`l`|Seek to the next 5 seconds|
-|Seeker|Play|`h`|Seek to the previous 5 seconds|
+|Seeker|Playing|`l`|Seek to the next 5 seconds or play the next music if remaning duration less than 5|
+|Seeker|Playing|`h`|Seek to the previous 5 seconds or play the previous music if remaning duration less than 5|
+|Seeker|Pauseing|`l`|Seek to the next 5 seconds or play the next music if remaning duration less than 5|
+|Seeker|Pauseing|`h`|Seek to the previous 5 seconds or play the previous music if remaning duration less than 5|
+|Seeker|Stopping|`l`|Seek to the next 5 seconds or play the next music if remaning duration less than 5|
+|Seeker|Stopping|`h`|Seek to the previous 5 seconds or play the previous music if remaning duration less than 5|
+# Side Effects
+- Resizing the window will cause a crash 

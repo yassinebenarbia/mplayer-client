@@ -1,0 +1,3 @@
+[config]
+path = "/home/yassine/Music"
+sorting = "ByDurationAscending" # ByTitleAscending, ByTitleDescending, ByDurationAscending, ByDurationDescending, Shuffle 

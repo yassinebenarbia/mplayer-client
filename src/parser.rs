@@ -1,13 +1,16 @@
-use std::sync::Arc;
-
 use crate::ui::{Music, Musics};
 use basic_toml;
-use serde::{self, Deserialize, Serialize};
-use audiotags;
+use serde::{self, de::Visitor, Deserialize, Serialize};
 
-#[derive(Deserialize, Serialize, Debug, Copy, Clone)]
+#[derive(Deserialize, Serialize, Debug, Copy, Clone, Default)]
+//TODO: add Normal
 pub enum Sorting{
-    Ascending, Descending
+    #[default]
+    ByTitleAscending,
+    ByTitleDescending,
+    ByDurationAscending,
+    ByDurationDescending,
+    Shuffle,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
@@ -30,17 +33,11 @@ impl Config {
                 let path = entry.path();
                 if path.is_dir() {
                     Config::visit_dirs(&path).que.iter().for_each(|v| {
-                        musics.push(
-                            Music::simple_new(
-                                v.path.to_owned(),
-                            )
-                        )
+                        musics.push(Music::simple_new(v.path.to_owned()))
                     });
                 } else {
                     musics.push(
-                        Music::simple_new(
-                            path,
-                        )
+                        Music::simple_new(path)
                     );
                 }
             }
@@ -49,10 +46,10 @@ impl Config {
     }
 
     pub fn parse_config(_path: &str) -> Wrapper {
-        let content = std::fs::read_to_string(_path).expect(
+        let conf_content = std::fs::read_to_string(_path).expect(
             &format!("Couldn't read config path '{}', aborting...", _path)
         );
-        let skeleton: Wrapper = basic_toml::from_str(&content).expect(
+        let skeleton: Wrapper = basic_toml::from_str(&conf_content).expect(
             &format!("Couldn't parse config path '{}', aborting...", _path)
         );
         skeleton

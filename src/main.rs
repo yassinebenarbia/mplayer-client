@@ -17,25 +17,36 @@ use crate::ui::Music;
 use crate::parser::*;
 use crate::utils::log;
 
+// NOTE(s)
+// - the fist lin of method/function documentation should be uppercase
 // TODO(s)
 // - make closing and opening the client does not affect the index of the currently playing song
 // - migrate from audiotags to lofty
 // - add keybind to pause playing
-// - add effect in the search bar to signify AfterSearch mode
 // - add keybind to pause
-// - add G, gg and g<n> vim keybinds
-// - add audio slider
+// - add g<n> vim keybinds
+// - add ctr+d and ctr+u vim keybinds
 // - musics should play one after the other automatically, unless stated otherwise
-// - searching should be extanded with to genre, artist, etc.
+// - searching should be extanded with to genre, etc.
 // - It would be nice to highlight the matched chars
-// - It would be nice to display the artist 
-// - forward and backward skip should play the next and the previous song of the filtered 
-// song list, if a search happened
 // - sort the full music list like the displyed one (if needed)
 // - add row number to the music list
 // - change highlight color to display that we are anticipation another character after the first g
+// - add numbering to for the music list
 // - add j,k and a number to go x number down or up
 // - add lyrics display between the list and actions
+// - add volume slider besides the actions bar
+// - make commands for search, for example duration: or genre:
+// - add search using commmands like :genre or :artist
+// - add song to a .m3u playlist
+// - navigate throught playlists from the config file
+// - register only the necessery dbus calls, and make them happen in the update_state method
+// -- this can go by adding an intermidary method that register calls and remove redendant
+//      and repetitive calls
+// - make every call that needs to access the dbus on the update_state method level
+// and then access those elements with a shared object method
+// - add repeat song, repeat list, don't repeate features
+// - Shift+Enter to cycle back on repeat and shuffle actions
 
 #[derive(Default, Debug)]
 pub enum ListMode {
@@ -73,9 +84,19 @@ pub trait Server {
     fn show(&self) -> Result<String>;
     fn timer(&self) -> Result<String>;
     fn seek(&self, duration: f64) -> Result<bool>;
-    fn volume(&self, amount:u8) -> Result<bool>;
+    fn volume(&self, amount:f64) -> Result<bool>;
     fn metadata(&self) -> Result<Metadata>;
     fn playing(&self) -> Result<Music>;
+}
+
+pub fn init_panic_hook() {
+    let original_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic_info| {
+        // intentionally ignore errors here since we're already in a panic
+        disable_raw_mode().unwrap();
+        stdout().execute(LeaveAlternateScreen).unwrap();
+        original_hook(panic_info);
+    }));
 }
 
 #[async_std::main]
@@ -88,6 +109,7 @@ async fn main() -> Result<()> {
         panic!("Server is not connected to the bust address, aborting..");
     });
 
+    init_panic_hook();
     enable_raw_mode()?;
     stdout().execute(EnterAlternateScreen)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
@@ -100,6 +122,7 @@ async fn main() -> Result<()> {
     musics.sort(config.config.clone().unwrap().sorting);
 
     ui.musics(musics);
+    ui.restore_state();
 
     let mut should_quit = false;
     while !should_quit {
@@ -131,7 +154,7 @@ fn handle_events<'a>(ui: &mut ui::UI<'a>) -> io::Result<bool>{
                                         ui.delete_char_querry()
                                     },
                                     KeyCode::Enter => {
-                                        block_on(ui.play_selected_song());
+                                        block_on(ui.play_selected_music());
                                         ui.reset_querry();
                                         ui.mode = ListMode::Select;
                                     },
@@ -158,13 +181,13 @@ fn handle_events<'a>(ui: &mut ui::UI<'a>) -> io::Result<bool>{
                                                     ui.reset_querry();
                                                     ui.mode = ListMode::Select;
                                                } else if c == ' ' {
-                                                    block_on(ui.play_selected_song());
+                                                    block_on(ui.play_selected_music());
                                                     ui.reset_querry();
                                                     ui.mode = ListMode::Select;
                                                 }
                                             },
                                             KeyCode::Enter => {
-                                                block_on(ui.play_selected_song());
+                                                block_on(ui.play_selected_music());
                                                 ui.reset_querry();
                                                 ui.mode = ListMode::Select;
                                             },
@@ -204,7 +227,7 @@ fn handle_events<'a>(ui: &mut ui::UI<'a>) -> io::Result<bool>{
                                             ui::AncitipationMode::Normal => {
                                                 match key.code {
                                                     KeyCode::Enter => {
-                                                        block_on(ui.play_selected_song());
+                                                        block_on(ui.play_selected_music());
                                                     },
                                                     KeyCode::Char(c) => {
                                                         if c == '/' {
@@ -215,12 +238,15 @@ fn handle_events<'a>(ui: &mut ui::UI<'a>) -> io::Result<bool>{
                                                             ui.list_up();
                                                         }else if c == 'j' {
                                                             ui.list_down();
-                                                        }else if c == ' ' || key.code == KeyCode::Enter {
-                                                            block_on(ui.play_selected_song());
+                                                        }else if c == ' ' {
+                                                            block_on(ui.play_selected_music());
                                                         }else if c == 's' {
                                                             ui.goto_playing();
                                                         }else if c == 'g' {
                                                             ui.anticipation_mode = ui::AncitipationMode::Char('g'); 
+                                                            // in case of uppercase 
+                                                        } else if c == 'G' {
+                                                            ui.goto_bottom();
                                                         }
                                                     },
                                                     _ => {}
@@ -232,7 +258,8 @@ fn handle_events<'a>(ui: &mut ui::UI<'a>) -> io::Result<bool>{
                                                         KeyCode::Char(c) => {
                                                             if c == 'g' {
                                                                 ui.goto_top();
-                                                            }                                                        },
+                                                            }                                                        
+                                                        },
                                                         _ => {}
                                                     }
                                                 }
@@ -259,30 +286,98 @@ fn handle_events<'a>(ui: &mut ui::UI<'a>) -> io::Result<bool>{
                                             _ => {}
                                         }
                                     }
-                                    // Other Modifiers
                                     _ =>{}
                                 }
                             }
                         },
                     }
                 },
-                ui::Region::Bar => {
-                    if key.kind == event::KeyEventKind::Press && key.code == KeyCode::Char('q') {
-                        return Ok(true);
+                ui::Region::Seeker => {
+                    if key.kind == event::KeyEventKind::Press {
+                        match key.modifiers {
+                            KeyModifiers::NONE => {
+                                match key.code {
+                                    KeyCode::Char(c) => {
+                                        if c == 'q' {
+                                            return Ok(true);
+                                        }else if c == 'l'{
+                                            block_on(ui.next_5s())
+                                        }else if c == 'h' {
+                                            block_on(ui.previous_5s())
+                                        }else if c == 'k' {
+                                            block_on(ui.toggle_play());
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            KeyModifiers::ALT => {
+                                match key.code {
+                                    KeyCode::Char(c) => {
+                                        if c == 'j' {
+                                            ui.select_list_region();
+                                        } else if c == 'k' {
+                                            ui.select_action_region();
+                                        }else if c == 'h' || c == 'l' {
+                                            ui.select_volume_region();
+                                        }
+                                    }
+                                    _ => {}
+                                }
+
+                            }
+                            _ => {}
+                        }
                     }
-                    if key.kind == event::KeyEventKind::Press && key.code == KeyCode::Char('l') {
-                        block_on(ui.next_5s())
-                    }
-                    if key.kind == event::KeyEventKind::Press && key.code == KeyCode::Char('h') {
-                        block_on(ui.previous_5s())
-                    }
-                    if key.kind == event::KeyEventKind::Press 
-                        && key.code == KeyCode::Char('j') && key.modifiers == KeyModifiers::ALT {
-                            ui.select_list_region();
-                    }
-                    if key.kind == event::KeyEventKind::Press 
-                        && key.code == KeyCode::Char('k') && key.modifiers == KeyModifiers::ALT {
-                            ui.select_action_region();
+                },
+                ui::Region::Volume => {
+                    if key.kind == event::KeyEventKind::Press {
+                        match key.modifiers {
+                            KeyModifiers::NONE => {
+                                match key.code {
+                                    KeyCode::Char(c) => {
+                                        if c == 'q' {
+                                            return Ok(true);
+                                        }else if c == 'k' || c == 'l' {
+                                            ui.increase_volume();
+                                        }else if c == 'h' || c == 'j'{
+                                            ui.decrease_volume();
+                                        }
+                                    }
+                                    _ => {}
+                                }
+
+                            },
+                            KeyModifiers::ALT => {
+                                match key.code {
+                                    KeyCode::Char(c) => {
+                                        if c == 'j' {
+                                            ui.select_list_region();
+                                        }else if c == 'k' {
+                                            ui.select_action_region();
+                                        }else if c == 'l' || c == 'h'{
+                                            ui.select_bar_region();
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            },
+                            // TODO make the increse add by 5
+                            KeyModifiers::SHIFT=> {
+                                match key.code {
+                                    KeyCode::Char(c) => {
+                                        if c == 'j' || c == 'h' {
+                                            ui.increase_volume();
+                                        }else if c == 'k' || c == 'l'{
+                                            ui.decrease_volume();
+                                        }
+                                    }
+                                    _ => {}
+                                }
+
+                            }
+                            _ => {}
+                        }
                     }
                 },
                 ui::Region::Action => {
