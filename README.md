@@ -1,6 +1,6 @@
 <h1 align="center">mplayer-client</h1>
 
-A simle terminal based [DBus](https://dbus.freedesktop.org/doc/api/html/) client written in [Rust](https://www.rust-lang.org) for the _mplayer-server_
+A simle terminal based [DBus](https://www.freedesktop.org/wiki/Software/dbus/#whatisd-bus) client written in [Rust](https://www.rust-lang.org) for the _mplayer-server_
 
 # Showcase
 ||||
