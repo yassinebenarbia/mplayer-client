@@ -6,6 +6,7 @@ pub trait StringFeatures {
     fn insert_if_empty(&mut self, content: &str);
 }
 
+#[allow(dead_code)]
 /// logs _data_ to a _file_ in a incremantive manner
 /// 
 /// Panics: 

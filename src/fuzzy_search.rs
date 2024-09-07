@@ -2,7 +2,6 @@
 // make it possible to take a vector of the Music struct, preform a fuzzy finding 
 // based on the title criteria, then return a new vector of the Music struct
 use std::iter;
-
 use crate::ui::{Music, UI};
 
 fn trigrams(s: &str) -> Vec<(char, char, char)> {
@@ -84,6 +83,8 @@ pub fn fuzzy_compare_durations(a: &str, b: &str) -> f32 {
     }
 }
 
+
+#[allow(dead_code)]
 pub fn fuzzy_search<'a, T: AsRef<str>>(s: &'a str, list: &'a [T]) -> Vec<(&'a str, f32)> {
     list.iter()
         .map(|value| {
@@ -97,9 +98,7 @@ pub fn fuzzy_search_musics_by_title<'a>(s: &'a str, list: &'a Vec<Music>) -> Vec
     list.iter()
         .map(|value| {
             let res = fuzzy_compare(s, value.title.as_ref());
-            (Music::simple_new(value.path.clone()), res) // TODO: change the simple_new to new
-                                                         // so you don't allways check paths for
-                                                         // title
+            (Music::unchecked_new(value.path.clone()), res)
         })
         .collect()
 }
@@ -110,12 +109,14 @@ pub fn fuzzy_search_music_titles_sorted<'a>(s: &'a str, list: &'a Vec<Music>) ->
     res
 }
 
+#[allow(dead_code)]
 pub fn fuzzy_search_sorted<'a, T: AsRef<str>>(s: &'a str, list: &'a [T]) -> Vec<(&'a str, f32)> {
     let mut res = fuzzy_search(s, list);
     res.sort_by(|(_, d1), (_, d2)| d2.partial_cmp(d1).unwrap()); // TODO to fix the unwrap call
     res
 }
 
+#[allow(dead_code)]
 pub fn fuzzy_search_threshold<'a, T: AsRef<str>>(
     s: &'a str,
     list: &'a [T],
@@ -135,6 +136,7 @@ pub fn fuzzy_search_music_titles_best_n<'a>(
     fuzzy_search_music_titles_sorted(s, list).into_iter().take(n).collect()
 }
 
+#[allow(dead_code)]
 pub fn fuzzy_search_best_n<'a, T: AsRef<str>>(
     s: &'a str,
     list: &'a [T],
@@ -164,9 +166,7 @@ fn fuzzy_search_musics_by_duration(s: &str, list: &Vec<Music>) -> Vec<(Music, f3
                 s,
                 UI::duration_to_string(value.length.as_secs()).as_str()
             );
-            (Music::simple_new(value.path.clone()), res) // TODO: change the simple_new to new
-                                                         // so you don't allways check paths for
-                                                         // title
+            (Music::unchecked_new(value.path.clone()), res)
         })
         .collect()
 }
@@ -185,10 +185,6 @@ fn fuzzy_search_artist_sorted(s: &str, list: &Vec<Music>) -> Vec<(Music, f32)> {
     res
 }
 
-    // let mut res = fuzzy_search_musics_by_artist(s, list);
-    // res.sort_by(|(_, d1), (_, d2)| d2.partial_cmp(d1).unwrap()); // TODO to fix the unwrap call
-    // res
-
 fn fuzzy_search_musics_by_artist(s: &str, list: &Vec<Music>) -> Vec<(Music, f32)> {
     list.iter()
         .map(|value| {
@@ -196,9 +192,7 @@ fn fuzzy_search_musics_by_artist(s: &str, list: &Vec<Music>) -> Vec<(Music, f32)
                 s,
                 &value.artist,
             );
-            (Music::simple_new(value.path.clone()), res) // TODO: change the simple_new to new
-                                                         // so you don't allways check paths for
-                                                         // title
+            (Music::unchecked_new(value.path.clone()), res) 
         })
         .collect()
 }

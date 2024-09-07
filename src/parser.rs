@@ -1,9 +1,9 @@
 use crate::ui::{Music, Musics};
 use basic_toml;
-use serde::{self, de::Visitor, Deserialize, Serialize};
+use crate::ui::Repeat;
+use serde::{self, Deserialize, Serialize};
 
 #[derive(Deserialize, Serialize, Debug, Copy, Clone, Default)]
-//TODO: add Normal
 pub enum Sorting{
     #[default]
     ByTitleAscending,
@@ -13,10 +13,11 @@ pub enum Sorting{
     Shuffle,
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, Default)]
 pub struct Config {
     pub path: Option<String>,
-    pub sorting: Option<Sorting>
+    pub sorting: Option<Sorting>,
+    pub repeat: Option<Repeat>
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
@@ -33,12 +34,20 @@ impl Config {
                 let path = entry.path();
                 if path.is_dir() {
                     Config::visit_dirs(&path).que.iter().for_each(|v| {
-                        musics.push(Music::simple_new(v.path.to_owned()))
+                        match Music::simple_new(v.path.to_owned()) {
+                            Some(music) => {
+                                musics.push(music)
+                            },
+                            None => {} 
+                        }
                     });
                 } else {
-                    musics.push(
-                        Music::simple_new(path)
-                    );
+                    match Music::simple_new(path) {
+                        Some(music) => {
+                            musics.push(music)
+                        },
+                        None => {} 
+                    }
                 }
             }
         }
@@ -67,6 +76,7 @@ impl Config {
 }
 
 mod test {
+    #[allow(unused_imports)]
     use super::*;
     #[test]
     fn test_config_parse() {

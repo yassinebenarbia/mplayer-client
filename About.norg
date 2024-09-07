@@ -1,0 +1,17 @@
+* NOTE(s)
+  ~ ( ) can't send song that has a non-utf-8 name
+* TODO(s)
+  ~ ( ) migrate from audiotags to lofty
+  ~ ( ) It would be nice to highlight the matched chars
+  ~ ( ) It would be nice to control displayed columns i.e. artist, duration, genre, etc. from config file
+  ~ ( ) change highlight color to display that we are anticipation another character after the first g
+  ~ ( ) add g<n> vim keybinds
+  ~ ( ) add music index for the music list
+  ~ ( ) add j,k and a number to go x number down or up
+  ~ ( ) add lyrics display between the list and actions
+  ~ ( ) add new criterion to search like :genre
+  ~ ( ) Make it possible enable/disable lyrics from config file
+  ~ ( ) Make it possible to add song to a .m3u playlist
+  ~ ( ) It should be possible to change highlight color from the config file
+  ~ ( ) It should be possible to add keybinds for each possible action from the config file
+  ~ ( ) navigate through .mu3 playlists from the config file

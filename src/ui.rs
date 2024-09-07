@@ -1,5 +1,7 @@
 use std::{time::Duration, path::PathBuf};
-use rand::{Rng, distributions::DistIter};
+use async_std::io;
+use crossterm::event::{self, KeyCode, KeyEvent, KeyModifiers};
+use rand::Rng;
 use async_std::task::block_on;
 use ratatui::{prelude::*, widgets::*, style::Stylize};
 use lofty;
@@ -7,22 +9,40 @@ use lofty::{
     file::{AudioFile, TaggedFileExt},
     tag::Accessor
 };
+use serde::{Deserialize, Serialize};
 
-use crate::utils::{log, StringFeatures};
-use crate::{fuzzy_search, ListMode, ServerProxy, Sorting};
+use crate::states::{State, Status};
+use crate::utils::StringFeatures;
+use crate::{fuzzy_search, Config, ServerProxy, Sorting};
+
+#[derive(Default, Debug)]
+pub enum ListMode {
+    Search,
+    #[default]
+    Select,
+    AfterSearch
+}
+
 
 #[derive(Default)]
+/// Represents a two chars combo in a keybind
 pub enum AncitipationMode {
     #[default]
+    /// no anticipation
     Normal,
+    /// contains the anticipated next character
     Char(char),
 }
 
-#[derive(Default)]
-enum Repeat {
+#[derive(Deserialize, Serialize, Debug, Clone, Default)]
+/// Represents the music repeat option
+pub enum Repeat {
+    /// repeat the currently playing music
     ThisMusic,
+    /// cyclye through all the playlist
     AllMusics,
     #[default]
+    /// stop after the currently playing music
     Dont
 }
 
@@ -37,8 +57,6 @@ pub struct UI<'a> {
     pub region: Region,
     /// UI style
     pub style: UIStyle,
-    /// proxy that communicates with the dbus server
-    pub proxy: ServerProxy<'a>,
     /// slection mod <Search, AfterSearch, Select>
     pub mode: ListMode,
     /// last used action
@@ -51,6 +69,7 @@ pub struct UI<'a> {
     repeat: Repeat,
     /// order list <Yes, No>
     order: Sorting,
+    state: State<'a>,
 }
 
 /// all the possible actions with the play button
@@ -69,12 +88,348 @@ impl Default for Region {
         Region::List
     }
 }
+ 
+
+impl ListMode {
+    pub fn handle_search<'a>(ui: &mut UI<'a>, key: &KeyEvent) {
+        if key.kind == event::KeyEventKind::Press && key.modifiers == KeyModifiers::NONE {
+            match key.code {
+                KeyCode::Char(c) => {
+                    block_on(ui.register_querry(c));
+                },
+                KeyCode::Backspace => {
+                    ui.delete_char_querry()
+                },
+                KeyCode::Enter => {
+                    block_on(ui.play_selected_music());
+                    ui.reset_querry();
+                    ui.mode = ListMode::Select;
+                },
+                KeyCode::Esc => {
+                    ui.mode = ListMode::AfterSearch;
+                },
+                _ => {},
+            }
+        }
+    }
+
+    pub fn handle_after_search<'a>(ui: &mut UI<'a>, key: &KeyEvent) -> io::Result<bool> {
+        if key.kind == event::KeyEventKind::Press  {
+            match key.modifiers {
+                KeyModifiers::NONE => {
+                    match key.code {
+                        KeyCode::Char(c) => {
+                            if c == 'j' {
+                                ui.list_down();
+                            }else if c == 'k' {
+                                ui.list_up();
+                            } else if c == '/' {
+                                ui.mode = ListMode::Search;
+                            } else if c == 'q' {
+                                ui.reset_querry();
+                                ui.mode = ListMode::Select;
+                            } else if c == ' ' {
+                                block_on(ui.play_selected_music());
+                                ui.reset_querry();
+                                ui.mode = ListMode::Select;
+                            }
+                        },
+                        KeyCode::Enter => {
+                            block_on(ui.play_selected_music());
+                            ui.reset_querry();
+                            ui.mode = ListMode::Select;
+                        },
+                        KeyCode::Esc => {
+                            ui.reset_querry();
+                            ui.mode = ListMode::Select;
+                        },
+                        _=>{}
+                    }
+                },
+                KeyModifiers::ALT => {
+                    match key.code {
+                        KeyCode::Char(c) => {
+                            if c == 'j' {
+                                ui.list_down();
+                            }else if c == 'k' {
+                                ui.list_up();
+                            }else if c == '/' {
+                                ui.mode = ListMode::Search;
+                            }
+                        },
+                        _ => {}
+                    }
+                },
+                _ => {}
+            }
+        }
+        Ok(false)
+    }
+
+    pub fn handle_select<'a>(ui: &mut UI<'a>, key: &KeyEvent) -> io::Result<bool>{
+        if key.kind == event::KeyEventKind::Press  {
+            match key.modifiers {
+                // No modifiers
+                KeyModifiers::NONE => {
+                    match ui.anticipation_mode {
+                        // No `g` key pressed beforehand
+                        AncitipationMode::Normal => {
+                            match key.code {
+                                KeyCode::Enter => {
+                                    block_on(ui.play_selected_music());
+                                },
+                                KeyCode::Char(c) => {
+                                    if c == '/' {
+                                        ui.mode = ListMode::Search;
+                                    }else if c == 'q' {
+                                        return Ok(true);
+                                    }else if c == 'k' {
+                                        ui.list_up();
+                                    }else if c == 'j' {
+                                        ui.list_down();
+                                    }else if c == ' ' {
+                                        block_on(ui.play_selected_music());
+                                    }else if c == 's' {
+                                        ui.goto_playing();
+                                    }else if c == 'g' {
+                                        ui.anticipation_mode = AncitipationMode::Char('g'); 
+                                        // in case of uppercase 
+                                    } else if c == 'G' {
+                                        ui.goto_bottom();
+                                    }
+                                },
+                                _ => {}
+                            }
+                        },
+                        AncitipationMode::Char(c) => {
+                            if c == 'g' {
+                                match key.code {
+                                    KeyCode::Char(c) => {
+                                        if c == 'g' {
+                                            ui.goto_top();
+                                        }                                                        
+                                    },
+                                    _ => {}
+                                }
+                            }
+                            ui.anticipation_mode = AncitipationMode::Normal;
+                        },
+                    }
+                }
+                KeyModifiers::ALT => {
+                    if let KeyCode::Char(c) = key.code {
+                        if c == 'k' {
+                            ui.select_bar_region();
+                        }else if c == 'j' {
+                            ui.select_action_region();
+                        }
+                    }
+                }
+                KeyModifiers::SHIFT => {
+                    match key.code {
+                        KeyCode::Char(c) => {
+                            if c == 'G' {
+                                ui.goto_bottom();
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                KeyModifiers::CONTROL => {
+                    match key.code {
+                        KeyCode::Char(c) => {
+                            if c == 'd' {
+                                ui.scroll_list_down();
+                            }else if c =='u' {
+                                ui.scroll_list_up();
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                _ =>{}
+            }
+        }
+        Ok(false)
+    }
+}
+
+impl Region {
+    pub fn handle_global<'a>(ui: &mut UI<'a>, key: &KeyEvent) {
+        match key.code {
+            KeyCode::Char(c) => {
+                if c == 'm' {
+                    ui.toggle_mute();
+                }else if c =='p' {
+                    block_on(ui.toggle_play());
+                }else if c == 'n' {
+                    ui.play_next();
+                } else if c == 'N' {
+                    ui.play_preivous();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    pub fn handle_list<'a>(ui: &mut UI<'a>, key: &KeyEvent) -> std::io::Result<bool>{
+        match ui.mode {
+            ListMode::Search => {
+                ListMode::handle_search(ui, key);
+            },
+            ListMode::AfterSearch => {
+                if ListMode::handle_after_search(ui, key).is_ok_and(|x| x == true ) {
+                    return Ok(true)
+                }
+            }
+            ListMode::Select => {
+                if ListMode::handle_select(ui, key).is_ok_and(|x| x == true ) {
+                    return Ok(true)
+                }
+            }
+        }
+        Ok(false)
+    }
+
+    pub fn handle_action<'a>(ui: &mut UI<'a>, key: &KeyEvent) -> std::io::Result<bool> {
+        if key.kind == event::KeyEventKind::Press {
+            match key.modifiers {
+                KeyModifiers::NONE => {
+                    match key.code {
+                        KeyCode::Char(c) => {
+                            if c == 'q' {
+                                return Ok(true);
+                            } else if c == 'l' {
+                                ui.next_action();
+                            } else if c == 'h' {
+                                ui.previous_action();
+                            }
+                        }
+                        KeyCode::Enter => {
+                            block_on(ui.preform_action());
+                        },
+                        _ => {}
+                    }
+                }
+                KeyModifiers::ALT => {
+                    match key.code {
+                        KeyCode::Char(c) => {
+                            if c == 'j' {
+                                ui.select_bar_region();
+                            }else if c =='k' {
+                                ui.select_list_region();
+                            }
+                        }
+                        KeyCode::Enter => {
+                            ui.cycle_back();
+                        },
+                        _ => {}
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(false)
+    }
+
+    pub fn handle_seeker<'a>(ui: &mut UI<'a>, key: &KeyEvent) -> std::io::Result<bool> {
+        if key.kind == event::KeyEventKind::Press {
+            match key.modifiers {
+                KeyModifiers::NONE => {
+                    match key.code {
+                        KeyCode::Char(c) => {
+                            if c == 'l'{
+                                block_on(ui.next_5s())
+                            }else if c == 'h' {
+                                block_on(ui.previous_5s())
+                            }else if c == 'k' {
+                                block_on(ui.toggle_play());
+                            }else if c == 'q' {
+                                return Ok(true)
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                KeyModifiers::ALT => {
+                    match key.code {
+                        KeyCode::Char(c) => {
+                            if c == 'j' {
+                                ui.select_list_region();
+                            } else if c == 'k' {
+                                ui.select_action_region();
+                            }else if c == 'h' || c == 'l' {
+                                ui.select_volume_region();
+                            }
+                        }
+                        _ => {}
+                    }
+
+                }
+                _ => {}
+            }
+        }
+        Ok(false)
+    }
+
+    pub fn handle_volume<'a>(ui: &mut UI<'a>, key: &KeyEvent) -> std::io::Result<bool> {
+        if key.kind == event::KeyEventKind::Press {
+            match key.modifiers {
+                KeyModifiers::NONE => {
+                    match key.code {
+                        KeyCode::Char(c) => {
+                            if c == 'k' || c == 'l' {
+                                ui.increase_volume();
+                            }else if c == 'h' || c == 'j'{
+                                ui.decrease_volume();
+                            }else if c == 'q' {
+                                return Ok(true)
+                            }
+                        }
+                        _ => {}
+                    }
+
+                },
+                KeyModifiers::ALT => {
+                    match key.code {
+                        KeyCode::Char(c) => {
+                            if c == 'j' {
+                                ui.select_list_region();
+                            }else if c == 'k' {
+                                ui.select_action_region();
+                            }else if c == 'l' || c == 'h'{
+                                ui.select_bar_region();
+                            }
+                        }
+                        _ => {}
+                    }
+                },
+                KeyModifiers::SHIFT=> {
+                    match key.code {
+                        KeyCode::Char(c) => {
+                            if c == 'j' || c == 'h' {
+                                ui.increase_volume();
+                            }else if c == 'k' || c == 'l'{
+                                ui.decrease_volume();
+                            }
+                        }
+                        _ => {}
+                    }
+
+                }
+                _ => {}
+            }
+        }
+        Ok(false)
+    }
+}
 
 #[derive(Default)]
 pub struct UIStyle {
     list_style: ListStyle,
     action_style: ActionStyle,
-    bar_style: SeekerStyle,
+    seeker_style: SeekerStyle,
+    volume_style: VolumeStyle,
 }
 
 pub struct ListStyle {
@@ -91,7 +446,21 @@ pub struct ListStyle {
 pub struct SeekerStyle {
     active_region_color: Color,
     passive_region_color: Color,
-    seeker_color: Color,
+    fg_seeker_color: Color,
+    bg_seeker_color: Color,
+}
+
+pub struct VolumeStyle {
+    active_region_color: Color,
+    passive_region_color: Color,
+    fg_volume_color: Color,
+    bg_volume_color: Color,
+}
+
+pub struct ActionStyle {
+    hilight_color: Color,
+    active_region_color: Color,
+    passive_region_color: Color,
 }
 
 impl Default for ListStyle {
@@ -110,13 +479,15 @@ impl Default for ListStyle {
 }
 
 impl UIStyle {
+    #[allow(dead_code)]
     pub fn new(
         list_style: ListStyle,
         action_style: ActionStyle,
-        bar_style: SeekerStyle
+        seeker_style: SeekerStyle,
+        volume_style: VolumeStyle,
         ) -> Self {
         UIStyle {
-            list_style, action_style, bar_style
+            list_style, action_style, seeker_style, volume_style
         }
     }
 }
@@ -126,16 +497,23 @@ impl Default for SeekerStyle {
         SeekerStyle {
             active_region_color: Color::Magenta,
             passive_region_color: Color::default(),
-            seeker_color: Color::Gray
+            fg_seeker_color: Color::Gray,
+            bg_seeker_color: Color::Black,
         }
     }
 }
 
-pub(crate) struct ActionStyle {
-    hilight_color: Color,
-    active_region_color: Color,
-    passive_region_color: Color,
+impl Default for VolumeStyle {
+    fn default() -> Self {
+        VolumeStyle {
+            active_region_color: Color::Magenta,
+            passive_region_color: Color::default(),
+            fg_volume_color: Color::Gray,
+            bg_volume_color: Color::Black,
+        }
+    }
 }
+
 
 impl Default for ActionStyle {
     fn default() -> Self {
@@ -157,7 +535,7 @@ impl<'a> UI<'a>{
             style : UIStyle::default(),
             action: PowerActions::BackwardSkip,
             just_preformed_action: Action::Pause,
-            proxy,
+            state: State::new(proxy),
             mode: ListMode::default() ,
             search_bufr: String::default(),
             anticipation_mode: AncitipationMode::default(),
@@ -166,8 +544,14 @@ impl<'a> UI<'a>{
         }
     }
 
+    pub fn update_from_config(&mut self, config: &Config) {
+        let config = config.clone();
+        self.repeat = config.repeat.unwrap_or_default();
+        self.order = config.sorting.unwrap_or_default();
+    }
+
     pub fn musics(&mut self, musics: Musics) {
-        self.power_bar.song_length = self.playing_music().length;
+        self.power_bar.song_length = self.state.playing_music_duration();
         self.music_list = musics;
     }
 
@@ -182,38 +566,6 @@ impl<'a> UI<'a>{
         }
     }
 
-    /// returns the music player status <Playing|Pausing|Stopping>
-    pub fn status(&self) -> Status {
-        let status = block_on(self.proxy.status())
-            .unwrap();
-        status.split_terminator("\n")
-            .next().unwrap();
-        // stopping or stopped
-        if status.contains("Stop") {
-            return Status::Stopping
-        // Pausing or paused
-        } else if status.contains("Paus") {
-            return Status::Pausing
-        }else {
-            return Status::Playing
-        }
-    }
-
-    /// returns the currently playing music
-    pub fn playing_music(&self) -> Music {
-        block_on(self.proxy.playing()).unwrap()
-    }
-
-    /// returns true if pausing is permissable, else false
-    pub fn can_pause(&mut self) -> bool {
-        // selected another song
-        if self.power_bar.song_name != 
-            self.music_list.que.get(self.music_list.selected).unwrap().title {
-                return false
-            }
-        return true
-    }
-
     pub fn next_action(&mut self) {
         self.action = match self.action {
             PowerActions::BackwardSkip => PowerActions::TogglePlay,
@@ -226,17 +578,16 @@ impl<'a> UI<'a>{
     }
     
     pub async fn pause(&mut self) {
-        self.proxy.pause().await.unwrap();
+        self.state.async_pause().await;
         self.just_preformed_action = Action::Pause;
     }
 
     /// resumes the currently playing song
     pub async fn resume(&mut self) {
-        block_on(self.resume_playing_song());
+        self.state.async_resume().await;
+        self.just_preformed_action = Action::Resume;
     }
 
-    // TODO play_next and play_preivous could be improved by removing the search of music index
-    // and only incrementing the already existing one
     pub async fn preform_action(&mut self) {
         // match the selected action
         match self.action {
@@ -251,7 +602,7 @@ impl<'a> UI<'a>{
                 self.play_preivous();
             },
             PowerActions::Stop => {
-                self.proxy.end().await.unwrap();
+                self.stop();
             },
             PowerActions::Sort => {
                 match self.order {
@@ -277,7 +628,6 @@ impl<'a> UI<'a>{
                     },
                 }
             }
-
             PowerActions::Repeat => {
                 match self.repeat {
                     Repeat::ThisMusic => {
@@ -294,43 +644,26 @@ impl<'a> UI<'a>{
         }
     }
 
-    #[deprecated(note = "now called playing_music")]
-    /// returns the currently plaing song
-    /// __deprecated__
-    pub fn playing_song(&self) -> Music {
-        block_on(self.proxy.playing()).unwrap()
-    }
-
-    pub async fn resume_playing_song(&mut self) {
-        match self.status() {
-            Status::Pausing => {
-                self.proxy.end().await.unwrap();
-                self.proxy.resume().await.unwrap();
-                self.just_preformed_action = Action::Play;
-            },
-            _ => {}
-        }
-    }
-
-    /// plays the provided *Music*
+    #[allow(dead_code)]
+    /// Plays the provided *Music*
     /// This should be used when the index of the music to play in the full music list is 
     /// known ahead of time 
     pub async fn o1_play_this_music(&mut self, toplay: &Music, playing_index: usize) {
         self.music_list.playing_index = playing_index;
         self.just_preformed_action = Action::Play;
-        match self.status() {
+        match self.state.status() {
             Status::Playing => {
-                self.proxy.end().await.unwrap();
-                self.proxy.play(toplay.path.as_os_str().to_str().unwrap().to_string()).await.unwrap();
+                self.state.end();
+                self.state.play(&toplay.path);
             },
             Status::Pausing => {
-                self.proxy.end().await.unwrap();
-                self.proxy.resume().await.unwrap();
-                self.proxy.play(toplay.path.as_os_str().to_str().unwrap().to_string()).await.unwrap();
+                self.state.end();
+                self.state.resume();
+                self.state.play(&toplay.path);
             },
             Status::Stopping => {
-                self.proxy.play(toplay.path.as_os_str().to_str().unwrap().to_string()).await.unwrap();
-                self.proxy.resume().await.unwrap();
+                self.state.play(&toplay.path);
+                self.state.resume();
             },
         }
     }
@@ -340,19 +673,18 @@ impl<'a> UI<'a>{
         self.music_list.playing_index = 
             self.music_list.full_que.iter().position(|x| x == toplay).unwrap_or(0);
         self.just_preformed_action = Action::Play;
-        match self.status() {
+        match self.state.status() {
             Status::Playing => {
-                self.proxy.end().await.unwrap();
-                self.proxy.play(toplay.path.as_os_str().to_str().unwrap().to_string()).await.unwrap();
+                self.state.end();
+                self.state.play(&toplay.path);
             },
             Status::Pausing => {
-                self.proxy.end().await.unwrap();
-                self.proxy.resume().await.unwrap();
-                self.proxy.play(toplay.path.as_os_str().to_str().unwrap().to_string()).await.unwrap();
+                self.state.end();
+                self.state.resume();
+                self.state.play(&toplay.path);
             },
             Status::Stopping => {
-                self.proxy.play(toplay.path.as_os_str().to_str().unwrap().to_string()).await.unwrap();
-                self.proxy.resume().await.unwrap();
+                self.state.play(&toplay.path);
             },
         }
     }
@@ -381,10 +713,7 @@ impl<'a> UI<'a>{
     /// Renders the region of the music list
     pub fn render_list(&mut self, frame: &mut Frame) {
         let mut rows = vec![];
-        // let playing = self.music_list.full_que.get(self.music_list.playing_index).unwrap();
-        let playing = self.playing_music();
-        // NOTE: clipping clipping artist or title won't work if their length is bigger then 
-        // the available width, check `Side Effects` in the readme 
+        let playing = self.state.playing_music();
         for music in self.music_list.que.iter() {
             let mut title = music.title.to_owned();
             let artist = music.artist.to_owned();
@@ -482,99 +811,59 @@ impl<'a> UI<'a>{
         let seconds = time % 60;
         let minities = time / 60;
 
-        let sseconds = if seconds > 10 {
+        let sseconds = if seconds > 9 {
             format!("{}", seconds)
         }else {
             format!("0{}", seconds)
         };
 
-        let sminutes = if minities> 10 {
+        let sminutes = if minities > 9 {
             format!("{}", minities)
         }else {
             format!("0{}", minities)
         };
 
-        return format!("{sminutes}:{sseconds}")
-    }
-
-    /// returns the full duration of the currently playing song
-    pub fn full_duration(&self) -> Duration{
-        let time = block_on(self.proxy.timer()).unwrap();
-        let s = time.splitn(2,'/').collect::<Vec<&str>>();
-        let secs = s.get(0).unwrap().parse::<f64>().unwrap();
-        Duration::from_secs_f64(secs)
-    }
-
-    /// returns the played time of the current song as a duration
-    pub fn played_duration(&self) -> Duration{
-        let time = block_on(self.proxy.timer()).unwrap();
-        let s = time.splitn(2,'/').collect::<Vec<&str>>();
-        let secs = s.get(1).unwrap().parse::<f64>().unwrap();
-        Duration::from_secs_f64(secs)
+        return format!("{}:{}", sminutes, sseconds)
     }
 
     /// Returns the current playing timer as a string "xx:yy"
-    //TODO: migrate this to use the timer api call
     fn timer(&mut self) -> String {
         format!("{}/{}",
-            UI::duration_to_string(self.power_bar.current_timer.as_secs()),
-            UI::duration_to_string(self.playing_music().length.as_secs())
+            UI::duration_to_string(self.state.played_duration().as_secs()),
+            UI::duration_to_string(self.state.playing_music().length.as_secs())
         )
     }
 
-    /// returns the volume percentage as a fraction value between 0 and 1
-    async fn volume_percent(&self) -> f64 {
-        let data = self.proxy.show().await.unwrap();
-        let lines = data.lines().collect::<Vec<&str>>();
-        let volume_s = lines.get(1).unwrap().split_at(8).1;
-        let volume = volume_s.parse::<f64>().unwrap();
-        return volume
-    }
-
-    /// TODO: make this undependent of the update_stae method my making it sync
-    /// calculates the percentage of the seeker with respect with the full song length
-    fn seeker_percent(&self) -> u16 {
-        let current = self.power_bar.current_timer.as_secs_f32();
-        let max = self.power_bar.song_length.as_secs_f32();
-        let ratio = if max != 0.0 {
-            Some(current / max)
+    /// Calculates the percentage of the seeker with respect with the full song length
+    fn seeker_percent(&self) -> f64 {
+        let current = self.state.played_duration().as_secs();
+        let max = self.state.playing_music().length.as_secs();
+        if max != 0 {
+            return current as f64 / max as f64
         }else {
-            None
+            return 0.0
         };
-        match ratio {
-            Some(number) => {
-                return (number * 100.0) as u16
-            },
-            None => return 0
-        }
     }
 
-    // TODO: Fix this wacky code, make it:
-    // - play seeks 5s if song is playing
-    // - plays the song and seeks 5s if song is not playing
-    // TODO: use another method for getting the song length
     /// Seeks playing time forward by 5 seconds
     pub async fn next_5s(&mut self) {
-        let current = self.played_duration();
-        let max = self.full_duration();
+        let current = self.state.played_duration();
+        let max = self.state.playing_music_duration();
         if current + Duration::from_secs(5) < max {
             self.power_bar.current_timer = current + Duration::from_secs(5);  
-            self.proxy.seek(5.0).await.unwrap();
+            self.state.seek(5.0);
         }else {
-                self.play_next();
+            self.play_next();
         }
     }
 
-    // TODO: Fix this wacky code, make it:
-    // - play seeks 5s if song is playing
-    // - plays the song and seeks 5s if song is not playing
     /// Seeks playing time backward by 5 seconds
     pub async fn previous_5s(&mut self) {
-        let current = self.played_duration();
+        let current = self.state.played_duration();
         match current.checked_sub(Duration::from_secs(5)) {
             Some(dur) => {
                 self.power_bar.current_timer = dur;  
-                self.proxy.seek(-5.0).await.unwrap();
+                self.state.seek(-5.0);
             },
             None => {
                 self.play_preivous();
@@ -589,13 +878,13 @@ impl<'a> UI<'a>{
         area.height = 3;
         area.width = (area.width / 5)*4 as u16;
 
-        let selected_music = self.playing_music();
+        let selected_music = self.state.playing_music();
         let style = match self.region {
             Region::Seeker => {
-                Style::new().fg(self.style.bar_style.active_region_color)
+                Style::new().fg(self.style.seeker_style.active_region_color)
             }
             _ => {
-                Style::new().fg(self.style.bar_style.passive_region_color)
+                Style::new().fg(self.style.seeker_style.passive_region_color)
             }
         };
 
@@ -606,11 +895,11 @@ impl<'a> UI<'a>{
             .unfilled_style(Style::default().fg(Color::Black))
             .line_set(symbols::line::THICK)
             .filled_style(Style::default()
-                .fg(Color::White)
-                .bg(Color::Black)
+                .fg(self.style.seeker_style.fg_seeker_color)
+                .bg(self.style.seeker_style.bg_seeker_color)
                 .add_modifier(Modifier::ITALIC))
             .label(self.timer())
-            .ratio(self.seeker_percent() as f64 / 100.0)
+            .ratio(self.seeker_percent())
             .render(area, frame.buffer_mut());
     }
 
@@ -625,10 +914,10 @@ impl<'a> UI<'a>{
 
         let style = match self.region {
             Region::Volume=> {
-                Style::new().fg(self.style.bar_style.active_region_color)
+                Style::new().fg(self.style.volume_style.active_region_color)
             }
             _ => {
-                Style::new().fg(self.style.bar_style.passive_region_color)
+                Style::new().fg(self.style.volume_style.passive_region_color)
             }
         };
 
@@ -639,10 +928,10 @@ impl<'a> UI<'a>{
             .unfilled_style(Style::default().fg(Color::Black))
             .filled_style(
                 Style::default()
-                .fg(Color::White)
-                .bg(Color::Black)
+                .fg(self.style.volume_style.fg_volume_color)
+                .bg(self.style.volume_style.bg_volume_color)
                 .add_modifier(Modifier::ITALIC))
-            .ratio(block_on(self.volume_percent()))
+            .ratio(self.state.volume())
             .render(area, frame.buffer_mut());
     }
 
@@ -692,11 +981,12 @@ impl<'a> UI<'a>{
                 actions.push("Shuffle")
             },
         }
-        let status = block_on(self.proxy.status()).unwrap();
-        let mut lines = status.lines();
-        // check if the selected song is playing, if so inser the pause icon
-        if lines.next().unwrap().to_lowercase().contains("playing") {
-            actions[1] = "⏸";
+        let status = self.state.status();
+        match status {
+            Status::Playing => {
+                actions[1] = "⏸";
+            },
+            _ => {}
         }
 
         Tabs::new(actions)
@@ -711,6 +1001,14 @@ impl<'a> UI<'a>{
             .render(area, frame.buffer_mut());
     }
 
+
+    /// Updates the music playing state
+    pub fn update_state(&mut self) {
+        block_on(self.state.async_batch_calls());
+        self.handle_music_selection();
+        self.handle_repeat();
+    }
+
     /// Renders the displayed UI
     pub fn render(&mut self, frame: &mut Frame) {
         self.update_state();
@@ -720,41 +1018,32 @@ impl<'a> UI<'a>{
         self.render_volume(frame);
     }
 
-    /// TODO: changed the calls inside the update state to a set of functions/methods
-    /// _Suceptible to change!_ for now it updates some states
-    /// like song the powerbar song length, current song,
-    /// song name, and the slected element in the music list,
-    /// this will be used later on to make all necessery dbus requests
-    pub fn update_state(&mut self) {
-        let time = block_on(self.proxy.timer()).unwrap();
-        let times = time.splitn(2, "/").collect::<Vec<&str>>();
-        let max_time = times.get(0).unwrap().to_owned();
-        let current_time = times.get(1).unwrap().to_owned();
-        let max_time = max_time.parse::<f32>().unwrap();
-        let current_time = current_time.parse::<f32>().unwrap();
-
-        self.power_bar.song_length = Duration::from_secs_f32(max_time);
-        self.power_bar.current_timer = Duration::from_secs_f32(current_time);
-        self.power_bar.song_name = self.playing_music().title;
-
-        self.music_list.state.select(Some(self.music_list.selected));
-
-
-        if self.status() == Status::Playing {
+    /// Handles repeating music
+    fn handle_repeat(&mut self) {
+        if self.state.status() == Status::Playing {
             match self.repeat {
                 Repeat::ThisMusic => {
-                    if current_time.trunc() == max_time.trunc() {
+                    if self.state.played_duration().as_secs() == self.state.playing_music_duration().as_secs() {
                         self.restart_playing_music();
                     }
                 },
                 Repeat::AllMusics => {
-                    if current_time.trunc() == max_time.trunc() {
+                    if self.state.played_duration().checked_add(Duration::from_millis(200)).unwrap().as_secs() >=
+                            self.state.playing_music_duration().as_secs() 
+                    {
                         self.play_next();
                     }
                 },
                 Repeat::Dont => {},
             }
         }
+
+    }
+
+    /// Handles music selection in the music list
+    pub fn handle_music_selection(&mut self) {
+        self.power_bar.song_name = self.state.playing_music().title;
+        self.music_list.state.select(Some(self.music_list.selected));
     }
 
     /// Selectes the upper element in the music list (goes up by 1)
@@ -763,7 +1052,6 @@ impl<'a> UI<'a>{
         let selected_index = self.music_list.selected;
         if selected_index == 0 {
             self.music_list.selected = quesize - 1;
-            // self.music_list.state.select(Some(quesize))
         }else {
             self.music_list.selected = self.music_list.selected - 1;
         }
@@ -781,10 +1069,6 @@ impl<'a> UI<'a>{
         }
     }
 
-    // there there should be a buffer to append the char to it and then search 
-    // where should the bufr be? self?
-    // FOR NOW, SEARCH ONLY BY TITLE
-    // TODO: make search wwork on _artist_, and _genre_
     /// Appends the char to the existing search querry and search it
     pub async fn register_querry(&mut self, c: char) {
         self.search_bufr.push(c);
@@ -807,12 +1091,6 @@ impl<'a> UI<'a>{
         self.music_list.selected = 0;
     }
 
-    // TODO: is this needed?
-    /// Gets the selected index of the music list
-    pub fn get_selected_index(&mut self) -> usize{
-       self.music_list.selected 
-    }
-
     /// Selects the currently playing song in the music list
     pub fn goto_playing(&mut self) {
         self.music_list.selected = self.music_list.playing_index;
@@ -825,19 +1103,17 @@ impl<'a> UI<'a>{
 
     /// Increases volume by 5
     pub fn increase_volume(&self) {
-        let volume = block_on(self.volume_percent()) * 100.0;
+        let volume = self.state.volume() * 100.0;
         if volume < 101.0 {
-            // TODO: remove the unwrap since its not a fatal error
-            block_on(self.proxy.volume(volume + 1.0)).unwrap();
+            self.state.change_volume(volume + 1.0);
         }
     }
 
     /// Decreases volume by 5
     pub fn decrease_volume(&self) {
-        let volume = block_on(self.volume_percent()) * 100.0;
+        let volume = self.state.volume() * 100.0;
         if  volume > 0.0 {
-            // TODO: remove the unwrap since its not a fatal error
-            block_on(self.proxy.volume(volume - 1.0)).unwrap();
+            self.state.change_volume(volume - 1.0);
         }
     }
 
@@ -852,6 +1128,7 @@ impl<'a> UI<'a>{
         block_on(self.play_this_music(&previous));
     }
 
+    #[allow(dead_code)]
     /// Plays the previous music in the list
     /// This should be used when the playing index of the full music list 
     /// is known ahead of time
@@ -862,10 +1139,11 @@ impl<'a> UI<'a>{
 
     /// Plays the next song in the music list
     fn restart_playing_music(&mut self) {
-        let playing = self.playing_music();
+        let playing = self.state.playing_music();
         block_on(self.play_this_music(&playing));
     }
 
+    #[allow(dead_code)]
     /// Plays the next song in the music list
     /// This should be used when the playing index of the full music list 
     /// is known ahead of time
@@ -888,7 +1166,7 @@ impl<'a> UI<'a>{
     /// - if stopping
     ///     - play
     pub async fn toggle_play(&mut self) {
-        match self.status() {
+        match self.state.status() {
             // if we are playing we pause
             Status::Playing => {
                 self.pause().await;
@@ -899,19 +1177,101 @@ impl<'a> UI<'a>{
             }
             // if we stopped we play
             Status::Stopping => {
-                self.play_this_music(&self.playing_music()).await;
-            },
+                match self.state.playing_music().is_valid() {
+                    Some(_) => {
+                        self.play_this_music(&self.state.playing_music()).await;
+                    }
+                    None => {
+                        self.play_selected_music().await;
+                    }
+                }
+            }
         }
     }
 
-    /// restores playing state
-    /// - restors the playing_index
+    /// Restores playing state
     pub fn restore_state(&mut self) {
-        for (index, music) in self.music_list.que.iter().enumerate() {
-            if &self.playing_music() == music {
-                self.music_list.playing_index = index;
+        self.music_list.playing_index = self.state.get_playing_index(&self.music_list.que);
+    }
+
+    /// Cycles through actions in this orders
+    /// - sort action:
+    ///     ByTitleAscending -> ByTitleDescending -> ByDurationAscending -> ByDurationDescending -> Shuffle -> ByTitleAscending
+    /// - repeat action:
+    ///     ThisMusic -> AllMusics -> Dont -> ThisMusic
+    pub fn cycle_back(&mut self) {
+        match self.action {
+            PowerActions::Sort => {
+                match self.order {
+                    Sorting::ByTitleAscending => {
+                        self.order = Sorting::Shuffle;
+                        self.music_list.sort(Some(self.order));
+                    },
+                    Sorting::ByTitleDescending => {
+                        self.order = Sorting::ByTitleAscending;
+                        self.music_list.sort(Some(self.order));
+                    },
+                    Sorting::ByDurationAscending => {
+                        self.order = Sorting::ByTitleDescending;
+                        self.music_list.sort(Some(self.order));
+                    },
+                    Sorting::ByDurationDescending => {
+                        self.order = Sorting::ByDurationAscending;
+                        self.music_list.sort(Some(self.order));
+                    },
+                    Sorting::Shuffle => {
+                        self.order = Sorting::ByDurationDescending;
+                        self.music_list.sort(Some(self.order));
+                    },
+                }
             }
+            // ThisMusic -> AllMusics -> Dont
+            PowerActions::Repeat => {
+                match self.repeat {
+                    Repeat::ThisMusic => {
+                        self.repeat = Repeat::Dont;
+                    },
+                    Repeat::AllMusics => {
+                        self.repeat = Repeat::ThisMusic;
+                    },
+                    Repeat::Dont => {
+                        self.repeat = Repeat::AllMusics;
+                    },
+                }
+            }
+            _ => {}
         }
+    }
+
+    /// Scrolls through the music list *up* by 7 units
+    pub fn scroll_list_up(&mut self) {
+        let quesize = self.music_list.que.len();
+        let selected_index = self.music_list.selected;
+        if selected_index == 0 {
+            self.music_list.selected = quesize - 1;
+        }else {
+            self.music_list.selected = self.music_list.selected - 7;
+        }
+    }
+
+    /// Scrolls through the music list *down* by 7 units
+    pub fn scroll_list_down(&mut self) {
+        let quesize = self.music_list.que.len();
+        let selected_index = self.music_list.selected;
+
+        if selected_index == quesize - 1 {
+            self.music_list.selected = 0;
+        }else {
+            self.music_list.selected = self.music_list.selected + 7;
+        }
+    }
+
+    pub fn toggle_mute(&self) {
+        self.state.toggle_mute();
+    }
+
+    fn stop(&self) {
+        self.state.end();
     }
 }
 
@@ -945,45 +1305,101 @@ impl Music {
         }
     }
 
-    pub fn simple_new(path: PathBuf) -> Self {
-        // let music = ffprobe::ffprobe(&path);
+    pub fn unchecked_new(path: PathBuf) -> Self {
         let res = lofty::probe::Probe::open(&path);
+        // can read file
         match res {
+            // can read properties
             Ok(probe) => {
                 if let Ok(mut x) = probe.read() {
                     let properties = x.properties();
                     let length = properties.duration();
+                    // can read metadata
                     if let Some(tag) = x.primary_tag_mut() {
-                        // TODO: check if empty
                         let mut title = tag.title().unwrap_or_default().to_string();
                         let mut artist = tag.artist().unwrap_or_default().to_string();
                         let mut genre = tag.genre().unwrap_or_default().to_string();
                         title.insert_if_empty("Unknown");
                         artist.insert_if_empty("Unknown");
                         genre.insert_if_empty("Unknown");
-
                         return Self {
                             title, length, path, artist, genre
                         }
+                        // can't read metadata
                     }else {
                         return Self {
-                             path, length,
+                            path, length,
                             title: String::from("Unknown"),
                             artist: String::from("Unknown"),
                             genre: String::from("Unknown"),
                         }
                     }
+                    // can't read propertes
                 }else {
-                    println!("couldn't read the music prob in {:?}, falling to default method.", path);
                     return Self::default(path)
                 }
             },
-            Err(e) => {
-                println!("couldn't open the music in {:?}, falling to default method.", path);
-                println!("Error: {}", e);
-                return Self::default(path);
+            // invalid file
+            _ => {
+                return Self::default(path)
             }
         };
+    }
+
+    pub fn simple_new(path: PathBuf) -> Option<Self> {
+        // vaild file check
+        if path.is_file() {
+            let res = lofty::probe::Probe::open(&path);
+            // can read file
+            match res {
+                // can read properties
+                Ok(probe) => {
+                    if let Ok(mut x) = probe.read() {
+                        let properties = x.properties();
+                        let length = properties.duration();
+                        // can read metadata
+                        if let Some(tag) = x.primary_tag_mut() {
+                            let mut title = tag.title().unwrap_or_default().to_string();
+                            let mut artist = tag.artist().unwrap_or_default().to_string();
+                            let mut genre = tag.genre().unwrap_or_default().to_string();
+                            title.insert_if_empty("Unknown");
+                            artist.insert_if_empty("Unknown");
+                            genre.insert_if_empty("Unknown");
+
+                            return Some(Self {
+                                title, length, path, artist, genre
+                            })
+                        // can't read metadata/tags
+                        }else {
+                            return Some(Self {
+                                path, length,
+                                title: String::from("Unknown"),
+                                artist: String::from("Unknown"),
+                                genre: String::from("Unknown"),
+                            })
+                        }
+                    // can't read propertes
+                    }else {
+                        return None
+                    }
+                },
+                // invalid file
+                Err(e) => {
+                    println!("File {:?} is not valid, if you think it's valid, try renaming it", path);
+                    println!("Error: {}", e);
+                    return None
+                }
+            };
+        }
+        println!("File {:?} is not valid", path);
+        return None
+    }
+
+    fn is_valid(&self) -> Option<&str> {
+        if self.path.exists() {
+            return Some(&self.path.to_str()?)
+        }
+        None
     }
 
     fn derive_title_from_path(path: &PathBuf) -> String {
@@ -1026,11 +1442,11 @@ impl Musics {
             que,
             selected: 0,
             state: TableState::default().with_selected(0),
-            playing_index: 0, // TODO: change this to -1 if no song is playing
+            playing_index: 0,
         }
     }
 
-    /// returns a [`Music`] reference to the next song in playing quee
+    /// Returns a [`Music`] reference to the next song in playing quee
     fn next_song(&self) -> &Music {
         if self.playing_index + 1 < self.que.len() {
             return &self.que.get(self.playing_index + 1).unwrap()
@@ -1039,7 +1455,7 @@ impl Musics {
         }
     }
 
-    /// returns a [`Music`] reference to the previous song in the palying quee
+    /// Seturns a [`Music`] reference to the previous song in the palying quee
     fn previous_song(&self) -> &Music {
         match self.playing_index.checked_sub(1) {
             Some(number) => return &self.que.get(number).unwrap(),
@@ -1047,31 +1463,7 @@ impl Musics {
         }
     }
 
-    fn select_next_song(&mut self) {
-        if self.selected + 1 < self.que.len() {
-            self.selected+=1;
-            self.state.select(Some(self.selected));
-        }else {
-            self.selected=0;
-            self.state.select(Some(self.selected));
-        }
-    }
-
-    fn select_previous_song(&mut self) {
-        match self.selected.checked_sub(1) {
-            Some(number) => {
-                self.selected = number;
-                self.state.select(Some(self.selected));
-            },
-            None => {
-                self.selected = self.que.len() - 1;
-                self.state.select(Some(self.selected));
-            },
-        }
-    }
-
     /// Sorts the music list acoording to the Sorting enum
-    // TODO: change this to accept Sorting instead of Option<Sorting>
     pub fn sort(&mut self, sorting: Option<Sorting>) {
         match sorting {
             Some(o) => {
@@ -1209,13 +1601,10 @@ pub enum PowerActions {
     Stop
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub enum Status {
-    Playing, Pausing, Stopping
-}
-
 pub mod test {
+    #[allow(unused_imports)]
     use super::*;
+    #[allow(unused_imports)]
     use crate::*;
 
     #[test]

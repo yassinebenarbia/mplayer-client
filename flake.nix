@@ -8,14 +8,14 @@
   outputs = { self, nixpkgs, utils, naersk }:
     utils.lib.eachDefaultSystem (system:
       let
-        pkgs = import nixpkgs { inherit system; };
         unstable = import <nixpkgs-unstable> {};
-        naersk-lib = pkgs.callPackage naersk { };
+        naersk-lib = pkgs.callPackage naersk {};
+        pkgs = import <nixpkgs> {};
       in
       {
         defaultPackage = naersk-lib.buildPackage ./.;
         devShell = with pkgs; mkShell {
-          buildInputs = [ unstable.rustc ];
+          buildInputs = [  unstable.rustc ];
         };
       });
 }
