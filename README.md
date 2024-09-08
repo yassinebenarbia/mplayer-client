@@ -16,6 +16,7 @@ ___
 - [Zbus](https://github.com/dbus2/zbus)
 - [Serder](https://github.com/serde-rs/serde)
 > and many others
+
 # Usage
 - Install this client
 - Install the `mplayer-server`
@@ -24,6 +25,7 @@ ___
 - Run the client with the path of the config as an argument, or it will try this path `$HOME/.config/mplayer-client/config.toml`
 - Enjoy
 > more detailed instructions soon
+
 # Keybinds
 |Region|Mode|Keybind|Desc|
 |------|----|-----|------|
@@ -76,5 +78,6 @@ ___
 |Volume|Normal|`Alt + j`|Select the `List` regin (move region down)|
 |Volume|Normal|`Alt + k`|Select the `Action` regin (move region up)|
 |Volume|Normal|`Alt + l` or `Alt + h`|Select the `Seeker` regin|
+
 # Side Effects
 - Can't play music with a non utf-8 encoded file names
