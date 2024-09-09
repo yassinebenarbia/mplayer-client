@@ -90,7 +90,7 @@ async fn main() -> Result<()> {
     });
     let proxy = ServerProxy::new(&connection).await?;
     proxy.status().await.unwrap_or_else(|_|{
-        panic!("Server is not connected to the bust address, aborting..");
+        panic!("Mplayer server is not Up, aborting..");
     });
 
     init_panic_hook();
