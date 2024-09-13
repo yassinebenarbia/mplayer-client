@@ -1,5 +1,6 @@
 use std::{env, io::{self, stdout}, path::PathBuf};
 
+use utils::RunStatus;
 use zbus::{proxy, Connection, Result};
 mod states;
 mod utils;
@@ -42,13 +43,13 @@ pub trait Server {
     /// - status: <Playing|Pausing|Paused>
     fn status(&self) -> Result<String>;
     /// Plays the music from the file path, returns true if no panic happened
-    fn play(&self, path: &PathBuf) -> Result<bool>;
+    fn play(&self, path: &PathBuf) -> Result<RunStatus>;
     /// Terminate playing, returns true if no panic happened
-    fn end(&self) -> Result<bool>;
+    fn end(&self) -> Result<RunStatus>;
     /// Resumes playing the currently paused song, returns true if no panic happened
-    fn resume(&self) -> Result<bool>;
+    fn resume(&self) -> Result<RunStatus>;
     /// Pauses playing the currently playing song, returns true if no panic happened
-    fn pause(&self) -> Result<bool>;
+    fn pause(&self) -> Result<RunStatus>;
     /// played duration over the the total duration of the music
     /// format: full length / played duration
     fn timer(&self) -> Result<String>;
@@ -63,13 +64,13 @@ pub trait Server {
     /// - if state is pausing it:
     ///     - resumes the currently playing song 
     ///     - seeks by the given duration
-    fn seek(&self, duration: f64) -> Result<bool>;
+    fn seek(&self, duration: f64) -> Result<RunStatus>;
     /// changes the volume of the player, return true if no panic happened
-    fn volume(&self, amount:f64) -> Result<bool>;
+    fn volume(&self, amount:f64) -> Result<RunStatus>;
     fn metadata(&self) -> Result<Metadata>;
     /// Gets the currently playing [Music]
     fn playing(&self) -> Result<Music>;
-    fn toggle_mute(&self) -> Result<bool>;
+    fn toggle_mute(&self) -> Result<RunStatus>;
 }
 
 pub fn init_panic_hook() {

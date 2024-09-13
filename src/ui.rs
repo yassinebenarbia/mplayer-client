@@ -240,7 +240,7 @@ impl Region {
                 if c == 'm' {
                     ui.toggle_mute();
                 }else if c =='p' {
-                    block_on(ui.toggle_play());
+                    ui.toggle_play();
                 }else if c == 'n' {
                     ui.play_next();
                 } else if c == 'N' {

@@ -29,3 +29,52 @@ impl StringFeatures for String {
     }
 }
 
+
+#[derive(PartialEq, Eq, Debug, Ord, PartialOrd, Clone, serde::Deserialize, serde::Serialize)]
+#[derive(zbus::zvariant::Type)]
+pub struct RunStatus{
+    error_messge: String,
+    status_type: StatusOption,
+}
+
+#[derive(PartialEq, Eq, Debug, Ord, PartialOrd, Clone, serde::Deserialize, serde::Serialize)]
+#[derive(zbus::zvariant::Type)]
+pub enum StatusOption {
+    Ok,
+    OutOfRange,
+    CoudntPreformAction,
+    CoudntGetSHandler,
+    CoudntSeek,
+    CoudntPauseManager,
+    CoudntPauseHandler,
+    CoudntResumeManager,
+    CoudntResumeHandler,
+    WrongPath,
+    CoudntReadMusicData,
+}
+
+impl RunStatus {
+    fn new(msg: String, status: StatusOption) -> Self {
+        Self {
+            error_messge: msg, status_type: status
+        }
+    }
+
+    fn ok() -> Self {
+        Self::new(String::from(""), StatusOption::Ok)
+    }
+
+    fn is_ok(&self) -> bool {
+        match self.status_type {
+            StatusOption::Ok => true,
+            _ => false
+        }
+    }
+
+    fn handler_errror() -> Self {
+        return RunStatus::new(
+            format!("coudn't get stream handler!"),
+            StatusOption::CoudntGetSHandler
+        )
+    }
+}
