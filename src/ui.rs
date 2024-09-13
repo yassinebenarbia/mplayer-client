@@ -88,7 +88,7 @@ impl Default for Region {
         Region::List
     }
 }
- 
+
 
 impl ListMode {
     pub fn handle_search<'a>(ui: &mut UI<'a>, key: &KeyEvent) {
@@ -101,7 +101,7 @@ impl ListMode {
                     ui.delete_char_querry()
                 },
                 KeyCode::Enter => {
-                    block_on(ui.play_selected_music());
+                    ui.play_selected_music();
                     ui.reset_querry();
                     ui.mode = ListMode::Select;
                 },
@@ -119,42 +119,28 @@ impl ListMode {
                 KeyModifiers::NONE => {
                     match key.code {
                         KeyCode::Char(c) => {
-                            if c == 'j' {
-                                ui.list_down();
-                            }else if c == 'k' {
-                                ui.list_up();
-                            } else if c == '/' {
-                                ui.mode = ListMode::Search;
-                            } else if c == 'q' {
-                                ui.reset_querry();
-                                ui.mode = ListMode::Select;
-                            } else if c == ' ' {
-                                block_on(ui.play_selected_music());
-                                ui.reset_querry();
-                                ui.mode = ListMode::Select;
+                            match c {
+                                'j' => ui.list_down(),
+                                'k' => ui.list_up(),
+                                '/' => ui.change_list_mode(ListMode::Search), 
+                                'q' => ui.change_list_mode(ListMode::Select),
+                                ' ' => ui.play_after_search(),
+                                _ => {}
                             }
                         },
-                        KeyCode::Enter => {
-                            block_on(ui.play_selected_music());
-                            ui.reset_querry();
-                            ui.mode = ListMode::Select;
-                        },
-                        KeyCode::Esc => {
-                            ui.reset_querry();
-                            ui.mode = ListMode::Select;
-                        },
+                        KeyCode::Enter => ui.play_after_search(),
+                        KeyCode::Esc => ui.change_list_mode(ListMode::Select),
                         _=>{}
                     }
                 },
                 KeyModifiers::ALT => {
                     match key.code {
                         KeyCode::Char(c) => {
-                            if c == 'j' {
-                                ui.list_down();
-                            }else if c == 'k' {
-                                ui.list_up();
-                            }else if c == '/' {
-                                ui.mode = ListMode::Search;
+                            match c {
+                                'j' => ui.list_down(),
+                                'k' => ui.list_up(),
+                                '/' => ui.change_list_mode(ListMode::Search), 
+                                _ => {}
                             }
                         },
                         _ => {}
@@ -175,27 +161,18 @@ impl ListMode {
                         // No `g` key pressed beforehand
                         AncitipationMode::Normal => {
                             match key.code {
-                                KeyCode::Enter => {
-                                    block_on(ui.play_selected_music());
-                                },
+                                KeyCode::Enter => ui.play_selected_music(),
                                 KeyCode::Char(c) => {
-                                    if c == '/' {
-                                        ui.mode = ListMode::Search;
-                                    }else if c == 'q' {
-                                        return Ok(true);
-                                    }else if c == 'k' {
-                                        ui.list_up();
-                                    }else if c == 'j' {
-                                        ui.list_down();
-                                    }else if c == ' ' {
-                                        block_on(ui.play_selected_music());
-                                    }else if c == 's' {
-                                        ui.goto_playing();
-                                    }else if c == 'g' {
-                                        ui.anticipation_mode = AncitipationMode::Char('g'); 
-                                        // in case of uppercase 
-                                    } else if c == 'G' {
-                                        ui.goto_bottom();
+                                    match c {
+                                        'j' => ui.list_down(),
+                                        'k' => ui.list_up(),
+                                        '/' => ui.change_list_mode(ListMode::Search), 
+                                        ' ' => ui.play_selected_music(),
+                                        's' => ui.goto_playing(),
+                                        'g' => ui.anticipate('g'),
+                                        'G' => ui.goto_bottom(),
+                                        'q' => return Ok(true), 
+                                        _ => {}
                                     }
                                 },
                                 _ => {}
@@ -205,9 +182,10 @@ impl ListMode {
                             if c == 'g' {
                                 match key.code {
                                     KeyCode::Char(c) => {
-                                        if c == 'g' {
-                                            ui.goto_top();
-                                        }                                                        
+                                        match c {
+                                            'g' => ui.goto_top(),
+                                            _ => {}
+                                        }
                                     },
                                     _ => {}
                                 }
@@ -218,18 +196,19 @@ impl ListMode {
                 }
                 KeyModifiers::ALT => {
                     if let KeyCode::Char(c) = key.code {
-                        if c == 'k' {
-                            ui.select_bar_region();
-                        }else if c == 'j' {
-                            ui.select_action_region();
+                        match c {
+                            'k' => ui.select_bar_region(),
+                            'j' => ui.select_action_region(),
+                            _ => {}
                         }
                     }
                 }
                 KeyModifiers::SHIFT => {
                     match key.code {
                         KeyCode::Char(c) => {
-                            if c == 'G' {
-                                ui.goto_bottom();
+                            match c {
+                                'G' => ui.goto_bottom(),
+                                _ => {}
                             }
                         }
                         _ => {}
@@ -238,10 +217,10 @@ impl ListMode {
                 KeyModifiers::CONTROL => {
                     match key.code {
                         KeyCode::Char(c) => {
-                            if c == 'd' {
-                                ui.scroll_list_down();
-                            }else if c =='u' {
-                                ui.scroll_list_up();
+                            match c {
+                                'd' => ui.scroll_list_down(),
+                                'u' => ui.scroll_list_up(),
+                                _ => {}
                             }
                         }
                         _ => {}
@@ -297,16 +276,15 @@ impl Region {
                 KeyModifiers::NONE => {
                     match key.code {
                         KeyCode::Char(c) => {
-                            if c == 'q' {
-                                return Ok(true);
-                            } else if c == 'l' {
-                                ui.next_action();
-                            } else if c == 'h' {
-                                ui.previous_action();
+                            match c {
+                                'q' => return Ok(true),
+                                'l' => ui.next_action(),
+                                'h' => ui.previous_action(),
+                                _ => {}
                             }
                         }
                         KeyCode::Enter => {
-                            block_on(ui.preform_action());
+                            ui.preform_action();
                         },
                         _ => {}
                     }
@@ -314,10 +292,10 @@ impl Region {
                 KeyModifiers::ALT => {
                     match key.code {
                         KeyCode::Char(c) => {
-                            if c == 'j' {
-                                ui.select_bar_region();
-                            }else if c =='k' {
-                                ui.select_list_region();
+                            match c {
+                                'j' => ui.select_bar_region(),
+                                'k' =>ui.select_list_region(),
+                                _ => {}
                             }
                         }
                         KeyCode::Enter => {
@@ -338,14 +316,12 @@ impl Region {
                 KeyModifiers::NONE => {
                     match key.code {
                         KeyCode::Char(c) => {
-                            if c == 'l'{
-                                block_on(ui.next_5s())
-                            }else if c == 'h' {
-                                block_on(ui.previous_5s())
-                            }else if c == 'k' {
-                                block_on(ui.toggle_play());
-                            }else if c == 'q' {
-                                return Ok(true)
+                            match c {
+                                'l' => ui.next_5s(),
+                                'h' => ui.previous_5s(),
+                                'k' => ui.toggle_play(),
+                                'q' => return Ok(true), 
+                                _ => {}
                             }
                         }
                         _ => {}
@@ -354,12 +330,11 @@ impl Region {
                 KeyModifiers::ALT => {
                     match key.code {
                         KeyCode::Char(c) => {
-                            if c == 'j' {
-                                ui.select_list_region();
-                            } else if c == 'k' {
-                                ui.select_action_region();
-                            }else if c == 'h' || c == 'l' {
-                                ui.select_volume_region();
+                            match c {
+                                'j' => ui.select_list_region(),
+                                'k' => ui.select_action_region(),
+                                'y' | 'l' => ui.select_volume_region(),
+                                _ => {}
                             }
                         }
                         _ => {}
@@ -378,12 +353,11 @@ impl Region {
                 KeyModifiers::NONE => {
                     match key.code {
                         KeyCode::Char(c) => {
-                            if c == 'k' || c == 'l' {
-                                ui.increase_volume();
-                            }else if c == 'h' || c == 'j'{
-                                ui.decrease_volume();
-                            }else if c == 'q' {
-                                return Ok(true)
+                            match c {
+                                'k' | 'l' => ui.increase_volume(),
+                                'h' | 'j' => ui.decrease_volume(),
+                                'q' => return Ok(true),
+                                _ => {}
                             }
                         }
                         _ => {}
@@ -393,12 +367,11 @@ impl Region {
                 KeyModifiers::ALT => {
                     match key.code {
                         KeyCode::Char(c) => {
-                            if c == 'j' {
-                                ui.select_list_region();
-                            }else if c == 'k' {
-                                ui.select_action_region();
-                            }else if c == 'l' || c == 'h'{
-                                ui.select_bar_region();
+                            match c {
+                                'j' => ui.select_list_region(),
+                                'k' => ui.select_action_region(),
+                                 'l' | 'h' => ui.select_bar_region(),
+                                _ => {}
                             }
                         }
                         _ => {}
@@ -407,10 +380,10 @@ impl Region {
                 KeyModifiers::SHIFT=> {
                     match key.code {
                         KeyCode::Char(c) => {
-                            if c == 'j' || c == 'h' {
-                                ui.increase_volume();
-                            }else if c == 'k' || c == 'l'{
-                                ui.decrease_volume();
+                            match c {
+                                'j' | 'h' => ui.increase_volume(),
+                                'k' | 'l' => ui.decrease_volume(),
+                                _ => {}
                             }
                         }
                         _ => {}
@@ -485,7 +458,7 @@ impl UIStyle {
         action_style: ActionStyle,
         seeker_style: SeekerStyle,
         volume_style: VolumeStyle,
-        ) -> Self {
+    ) -> Self {
         UIStyle {
             list_style, action_style, seeker_style, volume_style
         }
@@ -576,7 +549,7 @@ impl<'a> UI<'a>{
             PowerActions::Sort => PowerActions::BackwardSkip,
         }
     }
-    
+
     pub async fn pause(&mut self) {
         self.state.async_pause().await;
         self.just_preformed_action = Action::Pause;
@@ -588,12 +561,12 @@ impl<'a> UI<'a>{
         self.just_preformed_action = Action::Resume;
     }
 
-    pub async fn preform_action(&mut self) {
+    pub fn preform_action(&mut self) {
         // match the selected action
         match self.action {
             // we are on the toggle play botton
             PowerActions::TogglePlay => {
-                self.toggle_play().await;
+                self.toggle_play();
             },
             PowerActions::ForwardSkip => {
                 self.play_next();
@@ -690,7 +663,7 @@ impl<'a> UI<'a>{
     }
 
     /// plays the *selected* song in the music list
-    pub async fn play_selected_music(&mut self) {
+    pub fn play_selected_music(&mut self) {
         let toplay = self.music_list.que.get(self.music_list.selected).unwrap().clone();
         block_on(self.play_this_music(&toplay));
     }
@@ -709,7 +682,7 @@ impl<'a> UI<'a>{
     pub fn select_action_region(&mut self) {
         self.region = Region::Action
     } 
-    
+
     /// Renders the region of the music list
     pub fn render_list(&mut self, frame: &mut Frame) {
         let mut rows = vec![];
@@ -846,7 +819,7 @@ impl<'a> UI<'a>{
     }
 
     /// Seeks playing time forward by 5 seconds
-    pub async fn next_5s(&mut self) {
+    pub fn next_5s(&mut self) {
         let current = self.state.played_duration();
         let max = self.state.playing_music_duration();
         if current + Duration::from_secs(5) < max {
@@ -858,7 +831,7 @@ impl<'a> UI<'a>{
     }
 
     /// Seeks playing time backward by 5 seconds
-    pub async fn previous_5s(&mut self) {
+    pub fn previous_5s(&mut self) {
         let current = self.state.played_duration();
         match current.checked_sub(Duration::from_secs(5)) {
             Some(dur) => {
@@ -1029,7 +1002,7 @@ impl<'a> UI<'a>{
                 },
                 Repeat::AllMusics => {
                     if self.state.played_duration().checked_add(Duration::from_millis(200)).unwrap().as_secs() >=
-                            self.state.playing_music_duration().as_secs() 
+                        self.state.playing_music_duration().as_secs() 
                     {
                         self.play_next();
                     }
@@ -1098,7 +1071,7 @@ impl<'a> UI<'a>{
 
     /// Selects the last element in the music list
     pub fn goto_bottom(&mut self) {
-       self.music_list.selected = self.music_list.que.len() - 1;
+        self.music_list.selected = self.music_list.que.len() - 1;
     }
 
     /// Increases volume by 5
@@ -1165,24 +1138,24 @@ impl<'a> UI<'a>{
     ///     - resume
     /// - if stopping
     ///     - play
-    pub async fn toggle_play(&mut self) {
+    pub fn toggle_play(&mut self) {
         match self.state.status() {
             // if we are playing we pause
             Status::Playing => {
-                self.pause().await;
+                block_on(self.pause());
             },
             // if we are pausing we resume
             Status::Pausing => {
-                self.resume().await;
+                block_on(self.resume());
             }
             // if we stopped we play
             Status::Stopping => {
                 match self.state.playing_music().is_valid() {
                     Some(_) => {
-                        self.play_this_music(&self.state.playing_music()).await;
+                        block_on(self.play_this_music(&self.state.playing_music()));
                     }
                     None => {
-                        self.play_selected_music().await;
+                        self.play_selected_music();
                     }
                 }
             }
@@ -1272,6 +1245,28 @@ impl<'a> UI<'a>{
 
     fn stop(&self) {
         self.state.end();
+    }
+
+    fn change_list_mode(&mut self, mode: ListMode) {
+        match mode {
+            ListMode::Select => self.reset_querry(),
+            _ => {}
+        }
+        self.mode = mode;
+    }
+
+    fn play_after_search(&mut self) {
+        self.play_selected_music();
+        self.reset_querry();
+        self.mode = ListMode::Select;
+    }
+
+    fn quit(&self) -> Result<bool, ()>{
+        Ok(true)
+    }
+
+    fn anticipate(&mut self, arg: char) {
+        self.anticipation_mode = AncitipationMode::Char(arg); 
     }
 }
 
