@@ -13,11 +13,23 @@ pub enum Sorting{
     Shuffle,
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone, Default)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct Config {
     pub path: Option<String>,
     pub sorting: Option<Sorting>,
-    pub repeat: Option<Repeat>
+    pub repeat: Option<Repeat>,
+    pub fps: Option<u32>,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            fps: Some(30),
+            path: Some(String::from("")),
+            sorting: Some(Sorting::default()),
+            repeat: Some(Repeat::default()),
+        }
+    }
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]

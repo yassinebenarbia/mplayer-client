@@ -12,7 +12,7 @@ use lofty::{
 use serde::{Deserialize, Serialize};
 
 use crate::states::{State, Status};
-use crate::utils::StringFeatures;
+use crate::utils::{log, FPSController, StringFeatures};
 use crate::{fuzzy_search, Config, ServerProxy, Sorting};
 
 #[derive(Default, Debug)]
@@ -70,6 +70,7 @@ pub struct UI<'a> {
     /// order list <Yes, No>
     order: Sorting,
     state: State<'a>,
+    pub fps_controller: FPSController,
 }
 
 /// all the possible actions with the play button
@@ -514,6 +515,7 @@ impl<'a> UI<'a>{
             anticipation_mode: AncitipationMode::default(),
             repeat: Repeat::default(),
             order: Sorting::default(),
+            fps_controller: FPSController::default(),
         }
     }
 
@@ -521,6 +523,7 @@ impl<'a> UI<'a>{
         let config = config.clone();
         self.repeat = config.repeat.unwrap_or_default();
         self.order = config.sorting.unwrap_or_default();
+        self.fps_controller.change_fps(config.fps.unwrap_or(30));
     }
 
     pub fn musics(&mut self, musics: Musics) {

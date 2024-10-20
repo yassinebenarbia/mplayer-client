@@ -120,10 +120,12 @@ async fn main() -> Result<()> {
 
     let mut should_quit = false;
     while !should_quit {
-        terminal.draw(|frame| {
-            ui.render(frame);
-        })?;
-        should_quit = handle_events(&mut ui)?;
+        if ui.fps_controller.check_fps() {
+            terminal.draw(|frame| {
+                ui.render(frame);
+            })?;
+            should_quit = handle_events(&mut ui)?;
+        }
     }
 
     disable_raw_mode()?;
