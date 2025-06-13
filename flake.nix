@@ -5,17 +5,37 @@
     utils.url = "github:numtide/flake-utils";
   };
 
-  outputs = { self, nixpkgs, utils, naersk }:
-    utils.lib.eachDefaultSystem (system:
+  outputs =
+    {
+      self,
+      nixpkgs,
+      utils,
+      naersk,
+    }:
+    utils.lib.eachDefaultSystem (
+      system:
       let
-        unstable = import <nixpkgs-unstable> {};
-        naersk-lib = pkgs.callPackage naersk {};
-        pkgs = import <nixpkgs> {};
+        naersk-lib = pkgs.callPackage naersk { };
+        pkgs = import <nixpkgs-unstable> { };
       in
       {
         defaultPackage = naersk-lib.buildPackage ./.;
-        devShell = with pkgs; mkShell {
-          buildInputs = [  unstable.rustc ];
-        };
-      });
+        devShell =
+          with pkgs;
+          mkShell {
+            buildInputs = [
+              pkg-config
+              luajit
+              rustc
+              rustfmt
+              lsd
+              luajitPackages.ldbus
+            ];
+            shellHook = ''
+              export PKG_CONFIG_PATH="$PKG_CONFIG_PATH:${pkgs.luajit}/lib/pkgconfig"
+              alias ls="lsd"
+            '';
+          };
+      }
+    );
 }
