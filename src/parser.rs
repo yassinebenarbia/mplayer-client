@@ -1,10 +1,10 @@
-use crate::ui::{Music, Musics};
+use std::path::PathBuf;
+
 use basic_toml;
-use crate::ui::Repeat;
 use serde::{self, Deserialize, Serialize};
 
 #[derive(Deserialize, Serialize, Debug, Copy, Clone, Default)]
-pub enum Sorting{
+pub enum Sorting {
     #[default]
     ByTitleAscending,
     ByTitleDescending,
@@ -13,65 +13,45 @@ pub enum Sorting{
     Shuffle,
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone, Default)]
-pub struct Config {
-    pub path: Option<String>,
-    pub sorting: Option<Sorting>,
-    pub repeat: Option<Repeat>
+#[derive(Deserialize, Serialize, Debug, Clone)]
+pub struct Scripts {
+    pub list: Option<PathBuf>,
+    pub lyrics: Option<PathBuf>,
+    pub actions: Option<PathBuf>,
+    pub seeker: Option<PathBuf>,
+    pub volume: Option<PathBuf>,
+    pub all: Option<PathBuf>,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
-pub struct Wrapper {
-    pub config: Option<Config>
+#[serde(tag = "config")]
+pub struct Config {
+    pub fps: Option<u32>,
+    pub lyrics: Option<bool>,
+    pub genre: Option<bool>,
+    pub scripts: Option<Scripts>,
+    pub step_size: Option<usize>,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            fps: Some(30),
+            lyrics: Some(false),
+            genre: Some(false),
+            scripts: None,
+            step_size: Some(7),
+        }
+    }
 }
 
 impl Config {
-    fn visit_dirs(dir: &std::path::Path) -> Musics {
-        let mut musics = vec![];
-        if dir.is_dir() {
-            for entry in std::fs::read_dir(dir).unwrap() {
-                let entry = entry.unwrap();
-                let path = entry.path();
-                if path.is_dir() {
-                    Config::visit_dirs(&path).que.iter().for_each(|v| {
-                        match Music::simple_new(v.path.to_owned()) {
-                            Some(music) => {
-                                musics.push(music)
-                            },
-                            None => {} 
-                        }
-                    });
-                } else {
-                    match Music::simple_new(path) {
-                        Some(music) => {
-                            musics.push(music)
-                        },
-                        None => {} 
-                    }
-                }
-            }
-        }
-        Musics::new(musics)
-    }
+    pub fn parse_config(_path: &str) -> std::io::Result<Self> {
+        let conf_content = std::fs::read_to_string(_path)?;
 
-    pub fn parse_config(_path: &str) -> Wrapper {
-        let conf_content = std::fs::read_to_string(_path).expect(
-            &format!("Couldn't read config path '{}', aborting...", _path)
-        );
-        let skeleton: Wrapper = basic_toml::from_str(&conf_content).expect(
-            &format!("Couldn't parse config path '{}', aborting...", _path)
-        );
-        skeleton
-    }
-
-    pub fn extract_music(&self) -> Musics {
-        let musics = match self.path.to_owned() {
-            Some(p) => {
-                Config::visit_dirs(std::path::Path::new(&p))
-            },
-            None => panic!("playist path is None!"),
-        };
-        return musics
+        let config: Config = basic_toml::from_str(&conf_content)
+            .map_err(|e| std::io::Error::other(format!("{}", e)))?;
+        Ok(config)
     }
 }
 
@@ -79,26 +59,10 @@ mod test {
     #[allow(unused_imports)]
     use super::*;
     #[test]
-    fn test_config_parse() {
-        Config::parse_config("./config.toml");
-    }
-
-    #[test]
-    fn test_playlist_load() {
-        let res = Config::parse_config("./config.toml");
-        res.config.unwrap().extract_music();
-    }
-    
-    #[test]
-    fn sort_musics() {
-        let res = Config::parse_config("./config.toml");
-        let mut musics = res.config.clone().unwrap().extract_music();
-        musics.sort(res.config.clone().unwrap().sorting);
-    }
-
-    #[test]
-    #[should_panic]
-    fn test_failing() {
-        Config::parse_config("./config");
+    fn read_config() {
+        match Config::parse_config("./config.example.toml") {
+            Ok(_) => {}
+            Err(_) => panic!(),
+        }
     }
 }

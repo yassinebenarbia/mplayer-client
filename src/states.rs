@@ -1,10 +1,10 @@
 #![allow(dead_code)]
-use std::{path::PathBuf, time::Duration};
-
-use async_std::task::block_on;
+use futures::executor::block_on;
+use std::time::Duration;
 
 use crate::{
-    ui::Music, Metadata, ServerProxy
+    EndedStream, Metadata, MusicPlayedStream, OuterMusic, PausedStream, PlayingStatus, Repeat,
+    ResumedStream, ServerProxy, Sort, SortedStream, VolumeChangedStream,
 };
 
 #[derive(Debug, PartialEq, Eq, Default, Clone)]
@@ -12,7 +12,7 @@ pub enum Status {
     Playing,
     Pausing,
     #[default]
-    Stopping
+    Stopping,
 }
 
 /// Stores non displayeable informations about the music list
@@ -25,20 +25,46 @@ pub struct MusicListState {
 /// from the bus server
 #[derive(Default)]
 pub struct Batch {
-    /// played duration 
-    played_duration: Duration,
+    /// played duration
+    pub played_duration: Duration,
     /// full music duration
-    music_duration: Duration,
+    pub music_duration: Duration,
     /// currently playing music
-    playing_music: Music,
+    pub playing_music: OuterMusic,
     /// status <Playing|Pausing|Stopping>
-    status: Status,
+    pub status: PlayingStatus,
     /// playing volume
-    volume: f64,
+    pub volume: f32,
     /// currently playing music path
     music_path: String,
     /// currently playing music metadata
-    metadata: Metadata,
+    pub metadata: Metadata,
+    /// what to repeat <ThisMusic, AllMusics, None>
+    pub repeat: Repeat,
+    /// playlist order
+    pub sort: Sort,
+}
+
+pub struct Streams {
+    pub paused_stream: Option<PausedStream>,
+    pub resumed_stream: Option<ResumedStream>,
+    pub stopped_stream: Option<EndedStream>,
+    pub music_played_stream: Option<MusicPlayedStream>,
+    pub volume_changed_stream: Option<VolumeChangedStream>,
+    pub sorted_stream: Option<SortedStream>,
+}
+
+impl Default for Streams {
+    fn default() -> Self {
+        Self {
+            paused_stream: None,
+            resumed_stream: None,
+            stopped_stream: None,
+            music_played_stream: None,
+            volume_changed_stream: None,
+            sorted_stream: None,
+        }
+    }
 }
 
 /// Handle state management with the bus server
@@ -47,77 +73,51 @@ pub struct State<'a> {
     pub proxy: ServerProxy<'a>,
     /// batch of all possible derived values from the server proxy
     pub batch: Batch,
+    pub dbus_streams: Streams,
 }
 
 impl<'a> State<'a> {
-    pub fn get_playing_index(&self, musics: &Vec<Music>) -> usize{
-        let target = block_on(self.proxy.playing());
-        match target {
-            Ok(target) => {
-                for (index, music) in musics.iter().enumerate() {
-                    if music == &target {
-                        return index
-                    }
-                }
-                return 0
-            },
-            Err(_) => {
-                return 0
-            },
-        }
+    pub async fn get_playing_index(&self) -> usize {
+        self.proxy.get_playing_index().await.unwrap_or_default() as usize
     }
 
     fn handle_state(input: &str) -> Status {
         // stopping or stopped
         if input.contains("Stopped") {
-            return Status::Stopping
+            return Status::Stopping;
         // Pausing or paused
         } else if input.contains("Pausing") {
-            return Status::Pausing
-        }else {
-            return Status::Playing
+            return Status::Pausing;
+        } else {
+            return Status::Playing;
         }
     }
 
     fn handle_path(input: &str) -> String {
-        let res = input.splitn(2,":").collect::<Vec<&str>>();
+        let res = input.splitn(2, ":").collect::<Vec<&str>>();
         res.get(1).unwrap_or(&"").trim().to_string()
     }
 
-    fn handle_volume(input: &str) -> f64{
+    fn handle_volume(input: &str) -> f64 {
         let lines = input.splitn(2, ":").collect::<Vec<&str>>();
         let volume_s = lines.get(1).unwrap_or(&"0.5").trim();
         let volume = volume_s.parse::<f64>().unwrap();
         volume
     }
 
-    /// Handes the bus `status` call
-    /// Reutrn tuple of (status, path, duration) where:
-    /// - status: status of the server player
-    /// - path: path to the currently playing song 
-    /// - duration: played duration
-    fn hande_status_call(&self) -> (Status, String, f64) {
-        // call to be handled
-        let status = block_on(self.proxy.status())
-            .unwrap();
-        let mut l = status.split_terminator("\n");
-        let state = l.next().unwrap_or("Stopped");
-        let path = l.next().unwrap_or("");
-        let volume = l.next().unwrap_or("0.5");
-        (State::handle_state(state), State::handle_path(path), State::handle_volume(volume))
-    }
-
     /// gets the syncronized played duration
     fn handle_timer_call(&self) -> (Duration, Duration) {
-        let timer = block_on(self.proxy.timer()).unwrap_or(String::from("0.0/0.0"));
-        let s = timer.splitn(2,'/').collect::<Vec<&str>>();
-        let len = s.get(0).unwrap().parse::<f64>().unwrap();
-        let secs = s.get(1).unwrap().parse::<f64>().unwrap();
-        (Duration::from_secs_f64(secs), Duration::from_secs_f64(len))
+        let timer = block_on(self.proxy.timer()).unwrap_or_default();
+        let played = timer.0;
+        let full = timer.1;
+        (
+            Duration::from_secs_f32(played),
+            Duration::from_secs_f32(full),
+        )
     }
 
     /// gets the syncronized played duration
-    fn handle_playing_music_call(&self) -> Music {
+    fn handle_playing_music_call(&self) -> OuterMusic {
         block_on(self.proxy.playing()).unwrap_or_default()
     }
 
@@ -127,76 +127,39 @@ impl<'a> State<'a> {
     }
 
     pub fn finished_playing(&self) -> bool {
-        let timer = block_on(self.proxy.timer()).unwrap_or(String::from("0.0/0.0"));
-        let s = timer.splitn(2,'/').collect::<Vec<&str>>();
-        let len = s.get(0).unwrap().parse::<f64>().unwrap();
-        let played = s.get(1).unwrap().parse::<f64>().unwrap();
-        if len != 0.0 && played == 0.0 {return false} else {return true}
-    }
-
-
-    pub fn batch_calls(&mut self) {
-        (self.batch.played_duration, self.batch.music_duration) = self.handle_timer_call();
-        self.batch.playing_music = self.handle_playing_music_call();
-        (self.batch.status, self.batch.music_path , self.batch.volume) = self.hande_status_call();
-        self.batch.metadata = self.handle_metadata_call();
-    }
-
-    /// Handes the bus `status` call
-    /// Reutrn tuple of (status, path, duration) where:
-    /// - status: status of the server player
-    /// - path: path to the currently playing song 
-    /// - duration: played duration
-    async fn async_handle_status_call(&mut self) {
-        let status = self.proxy.status().await.unwrap_or_default();
-        let mut l = status.split_terminator("\n");
-        let state = l.next().unwrap_or("Stopp");
-        let path = l.next().unwrap_or("");
-        let volume = l.next().unwrap_or("0.5");
-        (self.batch.status, self.batch.music_path , self.batch.volume) =
-            (State::handle_state(state), State::handle_path(path), State::handle_volume(volume))
+        matches!(self.status(), PlayingStatus::Stopped)
     }
 
     pub async fn async_finished_playing(&self) -> bool {
-        let timer = self.proxy.timer().await.unwrap_or(String::from("0.0/0.0"));
-        let s = timer.splitn(2,'/').collect::<Vec<&str>>();
-        let len = s.get(0).unwrap().parse::<f64>().unwrap();
-        let played = s.get(1).unwrap().parse::<f64>().unwrap();
-        if len != 0.0 && played == 0.0 {return false} else {return true}
+        matches!(self.status(), PlayingStatus::Stopped)
     }
 
     /// gets the syncronized played duration
     async fn async_handle_timer_call(&mut self) {
-        let timer = self.proxy.timer().await.unwrap_or(String::from("0.0/0.0"));
-        let s = timer.splitn(2,'/').collect::<Vec<&str>>();
-        let len = s.get(0).unwrap().parse::<f64>().unwrap();
-        let played = s.get(1).unwrap().parse::<f64>().unwrap();
-        (self.batch.played_duration, self.batch.music_duration) = (Duration::from_secs_f64(played), Duration::from_secs_f64(len))
+        let timer = self.proxy.timer().await.unwrap_or_default();
+        let played = timer.0;
+        let full = timer.1;
+        (self.batch.played_duration, self.batch.music_duration) = (
+            Duration::from_secs_f32(played),
+            Duration::from_secs_f32(full),
+        )
     }
 
     /// gets the syncronized played duration
-    async fn  async_handle_playing_music_call(&mut self) {
+    async fn async_handle_playing_music_call(&mut self) {
         self.batch.playing_music = self.proxy.playing().await.unwrap_or_default();
     }
 
-    /// gets metadata of the metadata of the currently playing music
+    /// gets the metadata of the metadata of the currently playing [Music]
     async fn async_handle_metadata_call(&mut self) {
         self.batch.metadata = self.proxy.metadata().await.unwrap_or_default()
     }
 
-    /// Dervies what ever is deriveable from a dbus call to the server
-    /// and stores everything in the [State] object
-    pub async fn async_batch_calls(&mut self) {
-        // self.async_handle_metadata_call();
-        self.async_handle_timer_call().await;
-        self.async_handle_playing_music_call().await;
-        self.async_handle_status_call().await;
-    }
-
-    pub fn new(proxy: ServerProxy<'a>) -> State{
+    pub fn new(proxy: ServerProxy<'_>) -> State {
         State {
             proxy,
-            batch:Batch::default(),
+            batch: Batch::default(),
+            dbus_streams: Streams::default(),
         }
     }
 
@@ -211,46 +174,60 @@ impl<'a> State<'a> {
     }
 
     /// Currently playing [Music]
-    pub fn playing_music(&self) -> Music {
+    ///
+    /// used only for GUI
+    pub fn playing_music(&self) -> OuterMusic {
         self.batch.playing_music.to_owned()
     }
 
     /// Playing status <Playing|Pausing|Stopping>
-    pub fn status(&self) -> Status {
+    ///
+    /// used only for GUI
+    pub fn status(&self) -> PlayingStatus {
         self.batch.status.to_owned()
     }
 
     /// Volume level between 0 and 1
-    pub fn volume(&self) -> f64{
+    ///
+    /// used only for GUI
+    pub fn volume(&self) -> f32 {
         self.batch.volume
     }
 
     /// Path of the currently playing music
+    ///
+    /// used only for GUI
     pub fn music_path(&self) -> String {
         self.batch.music_path.to_owned()
     }
 
     /// Metadata about the currently playing music
+    ///
+    /// used only for GUI
     pub fn metadata(&self) -> Metadata {
         self.batch.metadata.to_owned()
     }
 
     /// plays the music from the path
-    pub fn play(&self, path: &PathBuf) {
-        block_on(self.proxy.play(path)).unwrap();
+    pub fn play(&self) {
+        block_on(self.proxy.play()).unwrap();
+    }
+
+    pub async fn play_from_index(&self, index: usize) {
+        self.proxy.play_from_index(index as u32).await.unwrap();
     }
 
     /// Stops the music playre
-    pub fn end(&self) {
-        block_on(self.proxy.end()).unwrap();
+    pub async fn end(&self) {
+        self.proxy.end().await.unwrap();
     }
 
     /// Seeks by x secons from the current playing time stamp
-    pub fn seek(&self, amount: f64) {
-        block_on(self.proxy.seek(amount)).unwrap();
+    pub async fn seek(&self, amount: f64) {
+        self.proxy.seek(amount).await.unwrap();
     }
 
-    /// Resumes the player 
+    /// Resumes the player
     pub fn resume(&self) {
         block_on(self.proxy.resume()).unwrap();
     }
@@ -260,20 +237,20 @@ impl<'a> State<'a> {
         block_on(self.proxy.pause()).unwrap();
     }
 
-    /// Changes playing volume, positive value increase 
+    /// Changes playing volume, positive value increase
     /// volume, and negative decreases
     pub fn change_volume(&self, amount: f64) {
-        block_on(self.proxy.volume(amount)).unwrap();
+        block_on(self.proxy.volume(amount as f32)).unwrap();
     }
-    
+
     /// Toggle mtue sate
-    pub fn toggle_mute(&self) {
-        block_on(self.proxy.toggle_mute()).unwrap();
+    pub async fn toggle_mute(&self) {
+        self.proxy.toggle_mute().await.unwrap();
     }
 
     /// plays the music from the path
-    pub async fn async_play(&self, path: &PathBuf) {
-        self.proxy.play(path).await.unwrap();
+    pub async fn async_play(&self) {
+        self.proxy.play().await.unwrap();
     }
 
     /// Stops the music playre
@@ -286,7 +263,7 @@ impl<'a> State<'a> {
         self.proxy.seek(amount).await.unwrap();
     }
 
-    /// Resumes the player 
+    /// Resumes the player
     pub async fn async_resume(&self) {
         self.proxy.resume().await.unwrap();
     }
@@ -296,14 +273,71 @@ impl<'a> State<'a> {
         self.proxy.pause().await.unwrap();
     }
 
-    /// Changes playing volume, positive value increase 
+    /// Changes playing volume, positive value increase
     /// volume, and negative decreases
-    pub async fn async_change_volume(&self, amount: f64) {
+    pub async fn async_change_volume(&self, amount: f32) {
         self.proxy.volume(amount).await.unwrap();
     }
 
     /// Toggle mtue sate
     pub async fn async_toggle_mute(&self) {
         self.proxy.toggle_mute().await.unwrap();
+    }
+
+    /// Fetch currently playing [Music] [Metadata] e.g. Lyrics, Cover, etc.
+    pub async fn fetch_playlist_data(&mut self) {
+        // ----------------------------------------------
+        self.batch.metadata = self.proxy.metadata().await.unwrap_or_default();
+        // ----------------------------------------------
+        let timer = self.proxy.timer().await.unwrap_or_default();
+        let played = timer.0;
+        let full = timer.1;
+        (self.batch.played_duration, self.batch.music_duration) = (
+            Duration::from_secs_f32(played),
+            Duration::from_secs_f32(full),
+        );
+        // ----------------------------------------------
+        self.batch.playing_music = self.proxy.playing().await.unwrap_or_default();
+        // ----------------------------------------------
+    }
+
+    pub async fn toggle_play(&self) {
+        self.proxy.toggle_play().await.unwrap();
+    }
+
+    pub async fn play_next(&self) {
+        self.proxy.play_next().await.unwrap();
+    }
+
+    pub async fn play_preivous(&self) {
+        self.proxy.play_previous().await.unwrap();
+    }
+
+    pub fn get_repeat(&self) -> Repeat {
+        block_on(async { self.proxy.get_repeat().await.unwrap_or_default() })
+    }
+
+    pub(crate) fn get_order(&self) -> crate::Sort {
+        block_on(async { self.proxy.get_sort().await.unwrap_or_default() })
+    }
+
+    pub(crate) fn get_volume(&self) -> f32 {
+        block_on(async { self.proxy.get_volume().await.unwrap_or_default() })
+    }
+
+    pub(crate) async fn increase_volume(&self) {
+        self.proxy.volume(self.volume() + 0.1).await.unwrap();
+    }
+
+    pub(crate) async fn decrease_volume(&self) {
+        self.proxy.volume(self.volume() as f32 - 0.1).await.unwrap();
+    }
+
+    pub(crate) async fn sort(&self, sort: crate::Sort) {
+        self.proxy.sort(sort).await.unwrap();
+    }
+
+    pub(crate) async fn repat(&self, repeat: Repeat) {
+        self.proxy.repeat(repeat).await.unwrap();
     }
 }

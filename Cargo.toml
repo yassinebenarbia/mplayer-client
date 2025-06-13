@@ -7,16 +7,18 @@ edition = "2021"
 readme = "README.md"
 license = "GPL-3.0-or-later"
 repository = "https://github.com/yassinebenarbia/mplayer-client"
-description = "Terminal based client for the mplayer-server music player server"
+description = "Terminal based client for the mplayer-server server"
+keywords = ["music", "music-client", "mplayer-client", "mplayer", "linux", "dbus", "zbus", "audio", "playback", "mplayer-server"]
 
 
 [dependencies]
-async-std = {version = "1.12.0", features = ["attributes"]}
-audiotags = "0.5.0"
 basic-toml = "0.1.9"
 crossterm = "0.27.0"
-lofty = "0.21.0"
-rand = "0.8.5"
+futures = "0.3.31"
+fuzzy-matcher = "0.3.7"
 ratatui = "0.28.0"
 serde = "1.0.204"
-zbus = "4.1.2"
+tokio = { version = "1.44.1", features = ["full"] }
+tui-input = "0.11.0"
+zbus = { git = "https://github.com/dbus2/zbus", branch = "main", features = ["tokio"] }
+mlua = { version = "0.10.3", features = ["luajit", "serialize"] }

@@ -1,0 +1,17 @@
+# NOTE: every single option can be omitted
+[config]
+sorting = "ByDurationAscending" # ByTitleAscending, ByTitleDescending, ByDurationAscending, ByDurationDescending, Shuffle 
+repeat = "AllMusics" # repeat state, other avilable options are `Dont, ThisMusic`
+fps = 30 # FPS, default to 30
+lyrics = true # display lyrics, defaults to false
+genre = false # display genre, default to false
+
+[scripts]
+# region_name = path/to/script.lua
+# only full path work for now
+all = "/home/user/.config/mplayer-client/lua/all.lua"
+list = "/home/user/.config/mplayer-client/lua/list.lua"
+# lyrics = "/home/user/.config/mplayer-client/list.lua"
+# actions = "/home/user/.config/mplayer-client/actions.lua"
+# seeker = "/home/user/.config/mplayer-client/seeker.lua"
+# volume = "/home/user/.config/mplayer-client/volume.lua"
