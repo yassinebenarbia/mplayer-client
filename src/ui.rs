@@ -897,26 +897,25 @@ impl<'a> UI<'a> {
     }
 
     pub fn new(proxy: ServerProxy<'a>) -> Self {
-        unsafe {
-            UI {
-                scripts: None,
-                power_bar: PowerBar::default(),
-                music_list: Musics::default(),
-                region: Region::default(),
-                style: UIStyle::default(),
-                action: PowerActions::BackwardSkip,
-                state: State::new(proxy),
-                mode: ListMode::default(),
-                search_bufr: Input::default(),
-                anticipation_mode: AncitipationMode::default(),
-                displayed_repeat: Repeat::default(),
-                displayed_sort: Sort::default(),
-                fps_controller: FPSController::default(),
-                displayed_lyrics: DisplayedLyrics::default(),
-                geometry: ViewGeometry::default(Rect::default()),
-                internal_clock: tokio::time::interval(Duration::from_secs(1)),
-                lua: mlua::Lua::unsafe_new(),
-            }
+        let lua = unsafe { mlua::Lua::unsafe_new() };
+        UI {
+            scripts: None,
+            power_bar: PowerBar::default(),
+            music_list: Musics::default(),
+            region: Region::default(),
+            style: UIStyle::default(),
+            action: PowerActions::BackwardSkip,
+            state: State::new(proxy),
+            mode: ListMode::default(),
+            search_bufr: Input::default(),
+            anticipation_mode: AncitipationMode::default(),
+            displayed_repeat: Repeat::default(),
+            displayed_sort: Sort::default(),
+            fps_controller: FPSController::default(),
+            displayed_lyrics: DisplayedLyrics::default(),
+            geometry: ViewGeometry::default(Rect::default()),
+            internal_clock: tokio::time::interval(Duration::from_secs(1)),
+            lua,
         }
     }
 
