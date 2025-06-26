@@ -1,6 +1,6 @@
 <h1 align="center">mplayer-client</h1>
 
-A simle terminal based [DBus](https://www.freedesktop.org/wiki/Software/dbus/#whatisd-bus) client for the [_mplayer-server_](https://github.com/yassinebenarbia/mplayer-server) written in [Rust](https://www.rust-lang.org)
+Simple terminal based [DBus](https://www.freedesktop.org/wiki/Software/dbus/#whatisd-bus) client for the [_mplayer-server_](https://github.com/yassinebenarbia/mplayer-server) written in [Rust](https://www.rust-lang.org)
 
 # Showcase
 ||||
@@ -15,7 +15,7 @@ ___
 - [Rust Fuzzy Search](https://gitlab.com/EnricoCh/rust-fuzzy-search)
 - [Loft-rs](https://github.com/Serial-ATA/lofty-rs)
 - [Zbus](https://github.com/dbus2/zbus)
-- [Serder](https://github.com/serde-rs/serde)
+- [Serde](https://github.com/serde-rs/serde)
 > and many others
 
 # Usage
@@ -26,7 +26,6 @@ ___
 - Run the `mplayer-client`
 >[!NOTE]
 > you can provide the config file as the first argument to the client, or place it here `$HOME/.config/mplayer-client/config.toml`.
-- Enjoy.
 > more detailed instructions soon
 
 # Keybinds and Configurations
