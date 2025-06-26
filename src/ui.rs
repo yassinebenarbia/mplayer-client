@@ -7,6 +7,7 @@ use mlua::Lua;
 use mlua::{UserData, UserDataMethods};
 use ratatui::{prelude::*, style::Stylize, widgets::*};
 use serde::{Deserialize, Serialize};
+use std::io;
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 use tokio::time::Interval;
@@ -406,6 +407,54 @@ impl ListMode {
 }
 
 impl Region {
+    pub async fn handle_events<'a>(ui: &mut UI<'a>, key: &KeyEvent) -> io::Result<bool> {
+        Region::handle_global(ui, &key).await;
+        // keybind depend on reagion
+        match ui.region {
+            Region::List => {
+                if Region::handle_list(ui, &key)
+                    .await
+                    .is_ok_and(|should_quit| should_quit == true)
+                {
+                    return Ok(true);
+                }
+            }
+            Region::Seeker => {
+                if Region::handle_seeker(ui, &key)
+                    .await
+                    .is_ok_and(|should_quit| should_quit == true)
+                {
+                    return Ok(true);
+                }
+            }
+            Region::Volume => {
+                if Region::handle_volume(ui, &key)
+                    .await
+                    .is_ok_and(|should_quit| should_quit == true)
+                {
+                    return Ok(true);
+                }
+            }
+            Region::Action => {
+                if Region::handle_action(ui, &key)
+                    .await
+                    .is_ok_and(|should_quit| should_quit == true)
+                {
+                    return Ok(true);
+                }
+            }
+            Region::Lyrics => {
+                if Region::handle_lyrics(ui, &key)
+                    .await
+                    .is_ok_and(|should_quit| should_quit == true)
+                {
+                    return Ok(true);
+                }
+            }
+        }
+        return Ok(false);
+    }
+
     pub async fn handle_global<'a>(ui: &mut UI<'a>, key: &KeyEvent) {
         if key.kind == event::KeyEventKind::Press {
             ui.run_global_script(key, ui.region.clone());

@@ -354,50 +354,7 @@ async fn main() -> Result<()> {
 async fn handle_events<'a>(ui: &mut ui::UI<'a>) -> io::Result<bool> {
     if event::poll(std::time::Duration::from_millis(50))? {
         if let Event::Key(key) = event::read()? {
-            ui::Region::handle_global(ui, &key).await;
-            // keybind depend on reagion
-            match ui.region {
-                ui::Region::List => {
-                    if ui::Region::handle_list(ui, &key)
-                        .await
-                        .is_ok_and(|should_quit| should_quit == true)
-                    {
-                        return Ok(true);
-                    }
-                }
-                ui::Region::Seeker => {
-                    if ui::Region::handle_seeker(ui, &key)
-                        .await
-                        .is_ok_and(|should_quit| should_quit == true)
-                    {
-                        return Ok(true);
-                    }
-                }
-                ui::Region::Volume => {
-                    if ui::Region::handle_volume(ui, &key)
-                        .await
-                        .is_ok_and(|should_quit| should_quit == true)
-                    {
-                        return Ok(true);
-                    }
-                }
-                ui::Region::Action => {
-                    if ui::Region::handle_action(ui, &key)
-                        .await
-                        .is_ok_and(|should_quit| should_quit == true)
-                    {
-                        return Ok(true);
-                    }
-                }
-                ui::Region::Lyrics => {
-                    if ui::Region::handle_lyrics(ui, &key)
-                        .await
-                        .is_ok_and(|should_quit| should_quit == true)
-                    {
-                        return Ok(true);
-                    }
-                }
-            }
+            return ui::Region::handle_events(ui, &key).await;
         }
     }
     return Ok(false);
