@@ -1830,10 +1830,12 @@ impl<'a> UI<'a> {
         match mode {
             ListMode::Select => {
                 self.geometry.disable_search();
+                self.swap_list_index_to_normal_mode();
                 self.reset_querry()
             }
             ListMode::Search => {
                 self.geometry.enable_search();
+                self.swap_list_index_to_search_mode();
             }
             _ => {}
         }
@@ -2052,6 +2054,16 @@ impl<'a> UI<'a> {
     async fn fetch_repeat(&mut self) {
         self.state.batch.repeat = self.state.proxy.get_repeat().await.unwrap_or_default();
     }
+
+    fn swap_list_index_to_normal_mode(&mut self) {
+        self.music_list.switch_selected_buffer = self.music_list.selected;
+        self.music_list.selected = 0;
+    }
+
+    fn swap_list_index_to_search_mode(&mut self) {
+        self.music_list.selected = self.music_list.switch_selected_buffer;
+        self.music_list.switch_selected_buffer = 0
+    }
 }
 
 #[derive(
@@ -2126,6 +2138,9 @@ pub struct Musics {
     pub musics: Vec<Music>,
     /// index of the currently *selected* music in the displayed music list
     pub selected: usize,
+    /// buffer used to switch between selected index values
+    /// search/aftersearch <===> normal
+    pub switch_selected_buffer: usize,
     pub state: TableState,
     /// full music list (not filtered)
     pub unfiltered_music_list: Vec<Music>,
