@@ -333,7 +333,6 @@ async fn main() -> Result<()> {
 
     ui.update_from_config(&config);
     ui.restore_state().await;
-    ui.fetch_playlist_data().await;
     ui.set_frame(&mut terminal.get_frame());
     let mut should_quit = false;
     while !should_quit {

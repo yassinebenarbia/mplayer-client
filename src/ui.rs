@@ -1,3 +1,4 @@
+use crate::parser::Scripts;
 use crate::{Repeat, Sort};
 use crossterm::event::Event as CrosstermEvent;
 use crossterm::event::{self, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -1037,9 +1038,8 @@ impl<'a> UI<'a> {
         }
     }
 
-    pub fn update_from_config(&mut self, config: &Config) {
-        // log(&format!("PATH: {:?}", config.scripts), "out.txt").unwrap();
-        self.scripts = match &config.scripts {
+    pub fn update_scripts(&mut self, scripts: &Option<Scripts>) {
+        self.scripts = match scripts {
             Some(scripts) => {
                 let fall = match &scripts.all {
                     Some(path) => {
@@ -1100,7 +1100,11 @@ impl<'a> UI<'a> {
                 ))
             }
             None => None,
-        };
+        }
+    }
+
+    pub fn update_from_config(&mut self, config: &Config) {
+        self.update_scripts(&config.scripts);
         let config = config.clone();
         self.fps_controller.change_fps(config.fps.unwrap_or(30));
         self.displayed_lyrics.displayable = config.lyrics.unwrap_or(false);
@@ -1532,7 +1536,7 @@ impl<'a> UI<'a> {
     /// fetch the currently playing music data, e.g. photo, lyrics, etc
     pub async fn fetch_playlist_data(&mut self) {
         let playlist = self.state.proxy.playlist().await.unwrap_or_default();
-        // let mut musics_vec = vec![];
+        self.music_list.unfiltered_music_list.clear();
         for (index, music) in playlist.musics.iter().enumerate() {
             let music = music.to_owned();
             self.music_list.unfiltered_music_list.push(Music {
