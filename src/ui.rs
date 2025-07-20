@@ -1,3 +1,4 @@
+use crate::parser::Scripts;
 use crate::{Repeat, Sort};
 use crossterm::event::Event as CrosstermEvent;
 use crossterm::event::{self, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -1037,9 +1038,8 @@ impl<'a> UI<'a> {
         }
     }
 
-    pub fn update_from_config(&mut self, config: &Config) {
-        // log(&format!("PATH: {:?}", config.scripts), "out.txt").unwrap();
-        self.scripts = match &config.scripts {
+    pub fn update_scripts(&mut self, scripts: &Option<Scripts>) {
+        self.scripts = match scripts {
             Some(scripts) => {
                 let fall = match &scripts.all {
                     Some(path) => {
@@ -1100,7 +1100,11 @@ impl<'a> UI<'a> {
                 ))
             }
             None => None,
-        };
+        }
+    }
+
+    pub fn update_from_config(&mut self, config: &Config) {
+        self.update_scripts(&config.scripts);
         let config = config.clone();
         self.fps_controller.change_fps(config.fps.unwrap_or(30));
         self.displayed_lyrics.displayable = config.lyrics.unwrap_or(false);
