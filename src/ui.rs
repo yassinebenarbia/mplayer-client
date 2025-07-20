@@ -1532,7 +1532,7 @@ impl<'a> UI<'a> {
     /// fetch the currently playing music data, e.g. photo, lyrics, etc
     pub async fn fetch_playlist_data(&mut self) {
         let playlist = self.state.proxy.playlist().await.unwrap_or_default();
-        // let mut musics_vec = vec![];
+        self.music_list.unfiltered_music_list.clear();
         for (index, music) in playlist.musics.iter().enumerate() {
             let music = music.to_owned();
             self.music_list.unfiltered_music_list.push(Music {
