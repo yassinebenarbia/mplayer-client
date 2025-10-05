@@ -19,7 +19,16 @@
         pkgs = import <nixpkgs-unstable> { };
       in
       {
-        defaultPackage = naersk-lib.buildPackage ./.;
+        defaultPackage = naersk-lib.buildPackage {
+          name = "mplayer-client";
+          src = ./.;
+          buildInputs = with pkgs; [
+            pkg-config
+            luajit
+            luajitPackages.ldbus
+            rustc
+          ];
+        };
         devShell =
           with pkgs;
           mkShell {

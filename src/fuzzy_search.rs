@@ -1,8 +1,8 @@
 #![allow(unused)]
+use crate::types::Music;
+use crate::ui::UI;
 use fuzzy_matcher::FuzzyMatcher;
 use std::cmp::Ordering;
-
-use crate::ui::{Music, UI};
 
 pub fn fuzzy_search_music_titles_best_n<'a>(
     s: &'a str,

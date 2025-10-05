@@ -16,3 +16,22 @@
   ~ ( ) navigate through .mu3 playlists from the config file
   ~ ( ) It would be nice to have a keybind to add a music to a specific playlist
   ~~ ( ) It would be nice to display those playlists in a nice way
+  ~~ ( ) It would be nice to add a music to a certain playlist
+  ~~ ( ) It would be nice to delete a music from a certain playlist
+
+* Possible commands
+  - :playlists
+  - :select_playlist "playlist name"
+  - :add_to_playlist "playlist name"
+  - :next_region
+  - :previous_region
+  - :select_region region_name
+  - :scroll down
+  - :scroll up
+  - :toggle mute
+  - :toggle play
+  - :toggle lyrics
+
+  At first, we will have the commands input box and the playlists displayed in the list box (where lyrics is displayed) then we can have the following:
+  - :select_playlist shows the list with playlists thing
+  - :select_playlist <playlist-name> selects the playlist

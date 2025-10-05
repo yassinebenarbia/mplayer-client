@@ -20,5 +20,5 @@ ratatui = "0.28.0"
 serde = "1.0.204"
 tokio = { version = "1.44.1", features = ["full"] }
 tui-input = "0.11.0"
-zbus = { git = "https://github.com/dbus2/zbus", branch = "main", features = ["tokio"] }
+zbus = { version = "5.11.0", features = ["tokio"] }
 mlua = { version = "0.10.3", features = ["luajit", "serialize"] }

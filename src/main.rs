@@ -1,7 +1,7 @@
 use std::{
+    collections::HashMap,
     env,
     io::{self, stdout},
-    time::Duration,
 };
 
 use crossterm::{
@@ -10,189 +10,31 @@ use crossterm::{
     ExecutableCommand,
 };
 use parser::*;
-use ratatui::{backend::CrosstermBackend, text::Span, Terminal};
-use ui::Music;
+use ratatui::{backend::CrosstermBackend, Terminal};
+use types::Lyrics;
+use types::Metadata;
+use types::OuterMusic;
+use types::PlayerStatus;
+use types::PlayingStatus;
+use types::Playlist;
+use types::Repeat;
+use types::Sort;
 use utils::RunStatus;
-use zbus::{proxy, zvariant::FilePath, Connection, Result};
+use zbus::{proxy, Connection, Result};
 
+mod allowed_commands;
 mod fuzzy_search;
 mod parser;
 mod states;
+mod style;
+mod types;
 mod ui;
 mod utils;
 
 #[allow(unused_imports)]
 use utils::log;
 
-#[derive(serde::Deserialize, serde::Serialize, zbus::zvariant::Type, Debug, Default, Clone)]
-struct Picture {
-    data: Vec<u8>,
-    typ: String,
-}
-
-#[derive(
-    PartialEq, Eq, Debug, Clone, zbus::zvariant::Type, serde::Serialize, serde::Deserialize,
-)]
-pub struct Line {
-    content: String,
-    timestamp: Duration,
-}
-
-#[derive(
-    PartialEq, Eq, Debug, Clone, zbus::zvariant::Type, serde::Deserialize, serde::Serialize,
-)]
-pub struct Lyrics {
-    time_is_correct: bool,
-    lines: Vec<Line>,
-}
-
-impl Default for Line {
-    fn default() -> Self {
-        Line {
-            content: String::new(),
-            timestamp: Duration::ZERO,
-        }
-    }
-}
-
-impl Default for Lyrics {
-    fn default() -> Self {
-        Self {
-            time_is_correct: false,
-            lines: vec![],
-        }
-    }
-}
-
-#[derive(serde::Deserialize, serde::Serialize, zbus::zvariant::Type, Debug, Default, Clone)]
-pub struct Metadata {
-    title: String,
-    artis: String,
-    genre: String,
-    cover: Picture,
-    lyrics: Lyrics,
-}
-
-#[derive(serde::Deserialize, serde::Serialize, Clone, Debug, Default, zbus::zvariant::Type)]
-pub enum PlayingStatus {
-    /// Pausing state
-    Playing,
-    /// Playing state
-    Pausing,
-    #[default]
-    /// Stopping state
-    Stopped,
-}
-
-#[derive(serde::Deserialize, serde::Serialize, Clone, Debug, zbus::zvariant::Type)]
-pub struct PlayerStatus {
-    status: PlayingStatus,
-    music: OuterMusic,
-    /// between 0 and 1
-    volume: f32,
-    index: u32,
-}
-
-#[derive(
-    serde::Serialize,
-    serde::Deserialize,
-    Debug,
-    Clone,
-    Copy,
-    Default,
-    zbus::zvariant::Type,
-    Eq,
-    PartialEq,
-)]
-pub enum Sort {
-    #[default]
-    /// Sort  by music title in ascending order
-    ByTitleAscending,
-    /// Sort by music title in descending order
-    ByTitleDescending,
-    /// Sort by music length in ascending order
-    ByDurationAscending,
-    /// Sort by music length in descending order
-    ByDurationDescending,
-    /// Sort by music artist name in ascending order
-    ArtistAscending,
-    /// Sort by music artist name in descending order
-    ArtistDescending,
-    // Sort at random
-    Shuffle,
-}
-
-impl Sort {
-    fn as_span(&self) -> Span {
-        match self {
-            Sort::ByTitleAscending => Span::from("TitleAscending"),
-            Sort::ByTitleDescending => Span::from("TitleDescending"),
-            Sort::ByDurationAscending => Span::from("DurationAscending"),
-            Sort::ByDurationDescending => Span::from("DurationDescending"),
-            Sort::ArtistAscending => Span::from("ArtistAscending"),
-            Sort::ArtistDescending => Span::from("ArtistDescending"),
-            Sort::Shuffle => Span::from("Shuffle"),
-        }
-    }
-}
-
-#[derive(
-    serde::Serialize,
-    serde::Deserialize,
-    Debug,
-    Clone,
-    Copy,
-    Default,
-    zbus::zvariant::Type,
-    Eq,
-    PartialEq,
-)]
-pub enum Repeat {
-    /// repeat the currently playing music
-    SameMusic,
-    #[default]
-    /// cycle through all the playlist
-    AllMusics,
-    /// stop after the currently playing music
-    Dont,
-}
-
-impl Repeat {
-    fn as_span(&self) -> Span {
-        match self {
-            Repeat::SameMusic => Span::from("RepeatMusic"),
-            Repeat::AllMusics => Span::from("RepeatList"),
-            Repeat::Dont => Span::from("NoRepeat"),
-        }
-    }
-}
-
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Default, zbus::zvariant::Type)]
-pub struct Playlist {
-    musics: Vec<Music>,
-    sort: Sort,
-    repeat: Repeat,
-    playing_index: u32,
-}
-
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Default, zbus::zvariant::Type)]
-pub struct OuterPlaylist {
-    pub musics: Vec<OuterMusic>,
-    pub sort: Sort,
-    pub repeat: Repeat,
-    pub playing_index: u32,
-}
-
-#[derive(
-    PartialEq, Eq, Debug, Clone, serde::Serialize, serde::Deserialize, zbus::zvariant::Type, Default,
-)]
-pub struct OuterMusic {
-    pub title: String,
-    pub length: Duration,
-    pub path: FilePath<'static>,
-    pub artist: String,
-    pub genre: String,
-}
+use crate::types::{OuterPlaylist, PlaylistOpperation};
 
 // NOTE: the return status of most functions is not currently documented, tho
 // usually they represent the success of the opperaiton/call.
@@ -214,6 +56,8 @@ pub trait Server {
     fn get_previous_music(&self) -> Result<OuterMusic>;
     /// Gets the index of the currently playing music
     fn get_playing_index(&self) -> Result<u32>;
+    // /// Gets the index of the currently playing music
+    // fn get_playlist_name(&self) -> Result<u32>;
     /// Gets the played duration for the currently playing music
     fn played_duration(&self) -> Result<f32>;
     /// Plays previous music on the playlist music list
@@ -228,6 +72,9 @@ pub trait Server {
     fn repeat(&self, repeat: Repeat) -> Result<RunStatus>;
     /// Returns current playlist
     fn playlist(&self) -> Result<OuterPlaylist>;
+    fn get_playlists(&self) -> Result<HashMap<String, Playlist>>;
+    fn get_playlists_names(&self) -> Result<Vec<String>>;
+    fn use_playlist(&self, title: String) -> Result<()>;
     /// Returns the lyrics of the current music
     fn lyrics(&self) -> Result<Lyrics>;
     /// Returns metadata of the current music
@@ -263,6 +110,18 @@ pub trait Server {
     fn seek(&self, duration: f64) -> Result<RunStatus>;
     /// changes the volume of the player (valueb between 0 and 1)
     fn volume(&self, amount: f32) -> Result<RunStatus>;
+    async fn rename_playlist(&self, old: &str, new: &str) -> Result<RunStatus>;
+    async fn remove_playlist(&self, new: &str) -> Result<RunStatus>;
+    async fn reload_config(&self) -> Result<()>;
+    async fn create_playlist(&self, id: String) -> Result<()>;
+    async fn save_to_playlist(
+        &self,
+        index: usize,
+        source: String,
+        destination: String,
+    ) -> Result<RunStatus>;
+    /// Gets current playlist name
+    async fn get_playlist_name(&self) -> Result<String>;
     /// Gets player volume (between 0 and 1)
     fn get_volume(&self) -> Result<f32>;
     /// Gets the currently playing [Music]
@@ -289,6 +148,25 @@ pub trait Server {
     /// Signal fires when the repeat status changes
     #[zbus(signal)]
     async fn repeat_changed(&self, sort: Repeat) -> zbus::Result<()>;
+
+    #[zbus(signal)]
+    async fn playlists_updated(
+        &self,
+        opperatioin: PlaylistOpperation,
+        id: &str,
+    ) -> zbus::Result<()>;
+
+    #[zbus(signal)]
+    #[allow(unused)]
+    async fn playlist_loaded(&self, id: &str) -> zbus::Result<()>;
+
+    #[zbus(signal)]
+    #[allow(unused)]
+    async fn playlist_deleted(&mut self, id: &str) -> zbus::Result<()>;
+
+    #[zbus(signal)]
+    #[allow(unused)]
+    async fn playlist_created(&mut self, id: &str) -> zbus::Result<()>;
 }
 
 pub fn init_panic_hook() {
