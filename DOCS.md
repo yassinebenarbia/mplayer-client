@@ -17,13 +17,22 @@
 |List|Normal|`gg`|Go to the top of the list|
 |List|Normal|`G`|Go to the bottom of the list|
 |List|Normal|`/`|Enable `Search` mode|
+|List|Normal|`:`|Enable `Command` mode|
 |List|Search|`Character`|Register the character to the search querry, check [this](#Search_filters) for search tricks|
 |List|Search|`Enter`|Play the music under selection|
+|List|Command|`Character`|Register the character to the command querry, check [this](#commands) for available commands|
+|List|Command|`Enter`|Execute command|
 |List|Search|`Esc`|Enable `After Search` mode|
 |List|After Search|`j`|Scroll down|
 |List|After Search|`k`|Scroll up|
 |List|After Search|`Space` or `Enter`|Play the music under selection|
 |List|After Search|`p`|Toggle `play` for the currently playing song|
+|Playlist|Normal|`j`|Move down|
+|Playlist|Normal|`k`|Move up|
+|Playlist|Normal|`Enter`|Select current playlist|
+|Lyrics|Normal|`j`|Move down|
+|Lyrics|Normal|`k`|Move up|
+|Lyrics|Normal|`Enter`|Play music from line if possible|
 |Actions|Normal|`l`|Move right|
 |Actions|Normal|`h`|Move left|
 |Actions|Normal|`Space` or `Enter`|Apply selected action (available only for `next, previous, play and stop` actions)|
@@ -41,10 +50,24 @@
 
 |filter|description|
 |------|-----------|
-|`:title <title>`| serch by title |
-|`:artist <artist>`| search by artist |
-|`:duration <mm:ss>`| search by duration |
-|`:genre <genre>`| search by genre|
+|`:title <title>`| Serch by title |
+|`:artist <artist>`| Search by artist |
+|`:duration <mm:ss>`| Search by duration |
+|`:genre <genre>`| Search by genre|
+
+# Commands
+
+|filter|description|
+|------|-----------|
+|`:move <up/down>`|Moves the selection cursor up/down|
+|`:play`|Plays the selected playlist|
+|`:resume`|Resumes playing music|
+|`:add_to_playlist <playlist-name>`|Adds selected song to playlist|
+|`:create_playlist <playlist-name>`|Creates a new playlist|
+|`:rename_playlist <old-name> <new-name>`|Renames playlist with old name to new one (can't rename `default`) |
+|`:remove_playlist <playlist-name>`|Remove playlis by the name (can't remove `default` and requires reload to take effect)|
+|`:toggle_mute`|Toggle mute|
+|`:q` | `:quit`|Quit client|
 
 # Configuration
 
@@ -69,7 +92,7 @@ list = "/home/user/.config/mplayer-client/lua/list.lua"
 # volume = "/home/user/.config/mplayer-client/volume.lua"
 ```
 
-## config
+## Config
 
 |field|description|
 |------|-----------|
@@ -77,7 +100,7 @@ list = "/home/user/.config/mplayer-client/lua/list.lua"
 |`lyrics`| Display lyrics window be display whenever a client is opened (this does not disable it) |
 |`genre`| Display genre row in the music list |
 
-## scripts
+## Scripts
 
 Each script will run **after each key press** whenever it's corresponding **region is sellected**, and the `all` will run when any region is selected. 
 Each script should be a path to a lua script with the following format
@@ -103,6 +126,7 @@ end
 - Code: check `enum KCode` in `./src/ui.rs` cuz it's kinda too big.
 
 # Extra
+
 Check the example(s) in [`./examples/`](./examples) for inspiration
 >[!NOTE]
 > More funcitonal API will be provided in the future, like functions/methods that allows you to iterract with client programatically. if you think this deserves better, make a PR and I'll happily review it :3

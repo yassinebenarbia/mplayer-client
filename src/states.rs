@@ -1,10 +1,11 @@
 #![allow(dead_code)]
 use futures::executor::block_on;
-use std::time::Duration;
+use std::{collections::HashMap, time::Duration};
 
 use crate::{
-    EndedStream, Metadata, MusicPlayedStream, OuterMusic, PausedStream, PlayingStatus, Repeat,
-    ResumedStream, ServerProxy, Sort, SortedStream, VolumeChangedStream,
+    EndedStream, Metadata, MusicPlayedStream, OuterMusic, PausedStream, PlayingStatus, Playlist,
+    PlaylistCreatedStream, PlaylistDeletedStream, PlaylistLoadedStream, PlaylistsUpdatedStream,
+    Repeat, ResumedStream, ServerProxy, Sort, SortedStream, VolumeChangedStream,
 };
 
 #[derive(Debug, PartialEq, Eq, Default, Clone)]
@@ -31,6 +32,8 @@ pub struct Batch {
     pub music_duration: Duration,
     /// currently playing music
     pub playing_music: OuterMusic,
+    /// Names of given playlists
+    pub playlists_names: Vec<String>,
     /// status <Playing|Pausing|Stopping>
     pub status: PlayingStatus,
     /// playing volume
@@ -52,6 +55,10 @@ pub struct Streams {
     pub music_played_stream: Option<MusicPlayedStream>,
     pub volume_changed_stream: Option<VolumeChangedStream>,
     pub sorted_stream: Option<SortedStream>,
+    pub playlist_updated: Option<PlaylistsUpdatedStream>,
+    pub playlist_loaded: Option<PlaylistLoadedStream>,
+    pub playlist_deleted: Option<PlaylistDeletedStream>,
+    pub playlist_created: Option<PlaylistCreatedStream>,
 }
 
 impl Default for Streams {
@@ -63,6 +70,10 @@ impl Default for Streams {
             music_played_stream: None,
             volume_changed_stream: None,
             sorted_stream: None,
+            playlist_updated: None,
+            playlist_loaded: None,
+            playlist_deleted: None,
+            playlist_created: None,
         }
     }
 }
@@ -155,7 +166,7 @@ impl<'a> State<'a> {
         self.batch.metadata = self.proxy.metadata().await.unwrap_or_default()
     }
 
-    pub fn new(proxy: ServerProxy<'_>) -> State {
+    pub fn new(proxy: ServerProxy<'_>) -> State<'_> {
         State {
             proxy,
             batch: Batch::default(),
@@ -208,6 +219,10 @@ impl<'a> State<'a> {
         self.batch.metadata.to_owned()
     }
 
+    pub fn playlist_names(&self) -> Vec<String> {
+        self.batch.playlists_names.to_owned()
+    }
+
     /// plays the music from the path
     pub fn play(&self) {
         block_on(self.proxy.play()).unwrap();
@@ -228,12 +243,12 @@ impl<'a> State<'a> {
     }
 
     /// Resumes the player
-    pub fn resume(&self) {
+    pub fn resume_stream(&self) {
         block_on(self.proxy.resume()).unwrap();
     }
 
     /// Pauses the player
-    pub fn pause(&self) {
+    pub fn pause_stream(&self) {
         block_on(self.proxy.pause()).unwrap();
     }
 
@@ -286,9 +301,17 @@ impl<'a> State<'a> {
 
     /// Fetch currently playing [Music] [Metadata] e.g. Lyrics, Cover, etc.
     pub async fn fetch_playlist_data(&mut self) {
-        // ----------------------------------------------
-        self.batch.metadata = self.proxy.metadata().await.unwrap_or_default();
-        // ----------------------------------------------
+        self.fetch_music_metadata().await;
+        self.fetch_duration_sync().await;
+        self.fetch_playing_music().await;
+        self.fetch_playlists_names().await;
+    }
+
+    pub async fn fetch_playing_music(&mut self) {
+        self.batch.playing_music = self.proxy.playing().await.unwrap_or_default();
+    }
+
+    pub async fn fetch_duration_sync(&mut self) {
         let timer = self.proxy.timer().await.unwrap_or_default();
         let played = timer.0;
         let full = timer.1;
@@ -296,9 +319,14 @@ impl<'a> State<'a> {
             Duration::from_secs_f32(played),
             Duration::from_secs_f32(full),
         );
-        // ----------------------------------------------
-        self.batch.playing_music = self.proxy.playing().await.unwrap_or_default();
-        // ----------------------------------------------
+    }
+
+    pub async fn fetch_playlists_names(&mut self) {
+        self.batch.playlists_names = self.proxy.get_playlists_names().await.unwrap_or_default();
+    }
+
+    pub async fn fetch_music_metadata(&mut self) {
+        self.batch.metadata = self.proxy.metadata().await.unwrap_or_default();
     }
 
     pub async fn toggle_play(&self) {
@@ -317,12 +345,21 @@ impl<'a> State<'a> {
         block_on(async { self.proxy.get_repeat().await.unwrap_or_default() })
     }
 
-    pub(crate) fn get_order(&self) -> crate::Sort {
+    pub fn get_order(&self) -> crate::Sort {
         block_on(async { self.proxy.get_sort().await.unwrap_or_default() })
     }
 
     pub(crate) fn get_volume(&self) -> f32 {
         block_on(async { self.proxy.get_volume().await.unwrap_or_default() })
+    }
+
+    pub fn get_playlists(&self) -> HashMap<String, Playlist> {
+        block_on(async { self.proxy.get_playlists().await.unwrap_or_default() })
+    }
+
+    /// Gets playlist names directly from the dbus proxy
+    pub fn get_playlists_names(&self) -> Vec<String> {
+        block_on(async { self.proxy.get_playlists_names().await.unwrap_or_default() })
     }
 
     pub(crate) async fn increase_volume(&self) {

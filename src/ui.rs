@@ -1,4 +1,16 @@
+// TODO: rename actions to pannel
+// TODO: add actions box for searching and commands e.g:
+// TODO: make a keybind to create a playlist
+// TODO: make a keybind to add a music to a playlist
+// TODO: make search golobal command, when canceling, you go back to original region when search is
+// done (this also allows for the after search effect, you temporary get transported to the list
+// region)
+// TODO: implement :delete_from_this_playlist and :delete_from_playlist [playlist_name] [name or index of music]
+// TODO: implement :add_from_this_playlist [destination] and :add_from_playlist [source] [name or
+// index] [destination]
 use crate::parser::Scripts;
+use crate::style::UIStyle;
+use crate::types::Music;
 use crate::{Repeat, Sort};
 use crossterm::event::Event as CrosstermEvent;
 use crossterm::event::{self, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -9,12 +21,13 @@ use mlua::{UserData, UserDataMethods};
 use ratatui::{prelude::*, style::Stylize, widgets::*};
 use serde::{Deserialize, Serialize};
 use std::io;
+use std::str::FromStr;
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 use tokio::time::Interval;
 use tui_input::{Input, InputRequest, StateChanged};
-use zbus::zvariant::FilePath;
 
+use crate::allowed_commands::{CommandContext, CommandName};
 use crate::states::State;
 use crate::utils::{log, FPSController};
 use crate::{fuzzy_search, Config, Lyrics, PlayingStatus, ServerProxy};
@@ -22,16 +35,20 @@ use crate::{fuzzy_search, Config, Lyrics, PlayingStatus, ServerProxy};
 pub struct ViewConfiguration {
     lyrics: bool,
     search: bool,
+    command: bool,
+    playlists: bool,
 }
 
 pub struct ViewGeometry {
     frame: Rect,
     list: Rect,
     lyrics: Option<Rect>,
+    playlists: Option<Rect>,
     actions: Rect,
     volume: Rect,
     slider: Rect,
     search: Option<Rect>,
+    command: Option<Rect>,
     configuration: ViewConfiguration,
 }
 
@@ -40,7 +57,9 @@ impl ViewGeometry {
         frame: Rect,
         list: Rect,
         lyrics: Option<Rect>,
+        playlists: Option<Rect>,
         search: Option<Rect>,
+        command: Option<Rect>,
         actions: Rect,
         slider: Rect,
         volume: Rect,
@@ -50,10 +69,12 @@ impl ViewGeometry {
             frame,
             list,
             lyrics,
+            playlists,
             actions,
             volume,
             slider,
             search,
+            command,
             configuration,
         }
     }
@@ -64,12 +85,16 @@ impl ViewGeometry {
             frame,
             None,
             None,
+            None,
+            None,
             frame,
             frame,
             frame,
             ViewConfiguration {
                 search: false,
                 lyrics: false,
+                playlists: false,
+                command: false,
             },
         );
         init.calculate_gemoetry();
@@ -79,10 +104,10 @@ impl ViewGeometry {
     fn calculate_list(&mut self) {
         let mut init = self.frame;
         init.height = init.height.saturating_sub(7);
-        if self.configuration.search {
+        if self.configuration.search || self.configuration.command {
             init.height = init.height.saturating_sub(3);
         }
-        if self.configuration.lyrics {
+        if self.configuration.lyrics || self.configuration.playlists {
             init.height /= 2;
             init.height = init.height.saturating_sub(1);
         }
@@ -104,6 +129,21 @@ impl ViewGeometry {
         }
     }
 
+    fn calculate_playlists(&mut self) {
+        if self.configuration.playlists {
+            let mut init = self.frame;
+            init.height = init.height.saturating_sub(4) / 2;
+            init.y = init.height.saturating_sub(2);
+            if self.configuration.search {
+                init.height = init.height.saturating_sub(1);
+                init.y = init.y + 1;
+            }
+            self.playlists = Some(init);
+        } else {
+            self.playlists = None;
+        }
+    }
+
     fn calculate_search(&mut self) {
         if self.configuration.search {
             let mut init = self.frame;
@@ -119,11 +159,25 @@ impl ViewGeometry {
         }
     }
 
+    fn calculate_command(&mut self) {
+        if self.configuration.command {
+            let mut init = self.frame;
+            init.y = init.height.saturating_sub(10);
+            if self.configuration.lyrics {
+                init.y = init.y / 2;
+                init.y = init.y.saturating_sub(1);
+            }
+            init.height = 3;
+            self.command = Some(init);
+        } else {
+            self.command = None;
+        }
+    }
+
     fn calculate_actions(&mut self) {
         let mut area = self.frame;
         if area.height > 7 {
-            // - seeker hight - action height
-            area.y = area.height - 3 - 4;
+            area.y = area.height.saturating_sub(3).saturating_sub(4);
             area.height = 3;
         }
         self.actions = area;
@@ -146,11 +200,12 @@ impl ViewGeometry {
         self.volume = area;
     }
 
-    // TODO: migrate to using saturating_sub instead of if checking
     pub fn calculate_gemoetry(&mut self) {
         self.calculate_list();
         self.calculate_lyrics();
+        self.calculate_playlists();
         self.calculate_search();
+        self.calculate_command();
         self.calculate_actions();
         self.calculate_slider();
         self.calculate_volume();
@@ -166,6 +221,10 @@ impl ViewGeometry {
 
     pub fn lyrics_geo(&self) -> Option<Rect> {
         self.lyrics
+    }
+
+    pub fn playlists_geo(&self) -> Option<Rect> {
+        self.playlists
     }
 
     pub fn actions_geo(&self) -> Rect {
@@ -184,21 +243,62 @@ impl ViewGeometry {
         self.search
     }
 
+    pub fn command_geo(&self) -> Option<Rect> {
+        self.command
+    }
+
     pub fn enable_search(&mut self) {
         self.configuration.search = true;
+    }
+
+    pub fn enable_command(&mut self) {
+        self.configuration.command = true;
     }
 
     pub fn disable_search(&mut self) {
         self.configuration.search = false;
     }
 
+    pub fn disable_command(&mut self) {
+        self.configuration.command = false;
+    }
+
+    #[allow(unused)]
+    pub fn disable_toggled(&mut self) {
+        self.configuration.lyrics = false;
+        self.configuration.playlists = false;
+    }
+
     pub fn toggle_lyrics(&mut self) {
         self.configuration.lyrics = !self.configuration.lyrics;
+    }
+
+    pub fn disable_lyrics(&mut self) {
+        self.configuration.lyrics = false;
+    }
+
+    #[allow(unused)]
+    pub fn enable_lyrics(&mut self) {
+        self.configuration.lyrics = true;
+    }
+
+    pub fn toggle_playlists(&mut self) {
+        self.configuration.playlists = !self.configuration.playlists;
+    }
+
+    pub fn disable_playlists(&mut self) {
+        self.configuration.playlists = false;
+    }
+
+    #[allow(unused)]
+    pub fn enable_playlists(&mut self) {
+        self.configuration.playlists = true;
     }
 }
 
 #[derive(Default, Debug, Deserialize, Serialize)]
 pub enum ListMode {
+    Command,
     Search,
     #[default]
     Select,
@@ -230,6 +330,8 @@ pub struct UI<'a> {
     pub mode: ListMode,
     /// search buffer, used to search through the musics list
     search_bufr: Input,
+    /// command buffer, used to input commands
+    command_bufr: Input,
     /// helps reading a combination of keys like `gg`
     pub anticipation_mode: AncitipationMode,
     /// what to repeat <ThisMusic, AllMusics, None>
@@ -240,10 +342,17 @@ pub struct UI<'a> {
     pub state: State<'a>,
     // TODO: make this private
     pub fps_controller: FPSController,
+    /// Displayed lyrics
     displayed_lyrics: DisplayedLyrics,
+    /// Displayed Playlists
+    displayed_playlists: DisplayedPlaylists,
+    /// Views/widgets geometry
     pub geometry: ViewGeometry,
+    /// Used for event checking
     pub internal_clock: Interval,
+    /// Lua scripts
     pub scripts: Option<Functions>,
+    /// Lua interpreter
     pub lua: Lua,
 }
 
@@ -285,6 +394,9 @@ pub enum Region {
     Seeker,
     Volume,
     Lyrics,
+    Playlist,
+    Search,
+    Command,
 }
 
 impl Default for Region {
@@ -307,14 +419,15 @@ impl ListMode {
                         return;
                     }
                     KeyCode::Esc => {
-                        ui.mode = ListMode::AfterSearch;
+                        ui.change_list_mode(ListMode::AfterSearch);
+                        ui.select_region(Region::List);
                         return;
                     }
                     _ => {}
                 },
                 _ => {}
             }
-            ui.register_querry(key.to_owned()).await;
+            ui.register_search_query(key.to_owned()).await;
         }
     }
 
@@ -361,7 +474,14 @@ impl ListMode {
                             KeyCode::Char(c) => match c {
                                 'j' => ui.list_down(),
                                 'k' => ui.list_up(),
-                                '/' => ui.change_list_mode(ListMode::Search),
+                                '/' => {
+                                    ui.select_region(Region::Search);
+                                    ui.change_list_mode(ListMode::Search)
+                                }
+                                ':' => {
+                                    ui.change_list_mode(ListMode::Command);
+                                    ui.select_region(Region::Command);
+                                }
                                 ' ' => ui.play_selected_music().await,
                                 's' => ui.goto_playing(),
                                 'g' => ui.anticipate('g'),
@@ -402,6 +522,33 @@ impl ListMode {
                 },
                 _ => {}
             }
+        }
+        Ok(false)
+    }
+
+    async fn handle_command(ui: &mut UI<'_>, key: &KeyEvent) -> std::io::Result<bool> {
+        if key.kind == event::KeyEventKind::Press {
+            ui.run_list_script(key, ListMode::Search);
+            match key.modifiers {
+                KeyModifiers::NONE => match key.code {
+                    KeyCode::Enter => {
+                        if ui.run_command().await? {
+                            return Ok(true);
+                        }
+                        ui.change_list_mode(ListMode::Select);
+                        ui.select_region(Region::List);
+                        return Ok(false);
+                    }
+                    KeyCode::Esc => {
+                        ui.change_list_mode(ListMode::Select);
+                        ui.select_region(Region::List);
+                        return Ok(false);
+                    }
+                    _ => {}
+                },
+                _ => {}
+            }
+            ui.register_command_query(key.to_owned()).await;
         }
         Ok(false)
     }
@@ -452,6 +599,30 @@ impl Region {
                     return Ok(true);
                 }
             }
+            Region::Search => {
+                if Region::handle_search(ui, &key)
+                    .await
+                    .is_ok_and(|should_quit| should_quit == true)
+                {
+                    return Ok(true);
+                }
+            }
+            Region::Command => {
+                if Region::handle_command(ui, &key)
+                    .await
+                    .is_ok_and(|should_quit| should_quit == true)
+                {
+                    return Ok(true);
+                }
+            }
+            Region::Playlist => {
+                if Region::handle_playlist(ui, &key)
+                    .await
+                    .is_ok_and(|should_quit| should_quit == true)
+                {
+                    return Ok(true);
+                }
+            }
         }
         return Ok(false);
     }
@@ -462,7 +633,7 @@ impl Region {
             match key.modifiers {
                 KeyModifiers::NONE => match key.code {
                     KeyCode::Char(c) => match ui.mode {
-                        ListMode::Search => {}
+                        ListMode::Search | ListMode::Command => {}
                         _ => match c {
                             'm' => ui.toggle_mute().await,
                             'p' => ui.toggle_play().await,
@@ -479,21 +650,27 @@ impl Region {
                                 Region::List => {
                                     if ui.displayed_lyrics.displayable {
                                         ui.select_lyrics_region()
+                                    } else if ui.displayed_playlists.displayable {
+                                        ui.select_playlist_region()
                                     } else {
                                         ui.select_action_region()
                                     }
                                 }
-                                Region::Lyrics => ui.select_action_region(),
+                                Region::Lyrics | Region::Playlist => ui.select_action_region(),
                                 Region::Action => ui.select_bar_region(),
                                 Region::Seeker => ui.select_list_region(),
                                 Region::Volume => ui.select_list_region(),
+                                Region::Search | Region::Command => {}
                             },
                             'k' => match ui.region {
+                                Region::Search | Region::Command => {}
                                 Region::List => ui.select_volume_region(),
-                                Region::Lyrics => ui.select_list_region(),
+                                Region::Lyrics | Region::Playlist => ui.select_list_region(),
                                 Region::Action => {
                                     if ui.displayed_lyrics.displayable {
                                         ui.select_lyrics_region()
+                                    } else if ui.displayed_playlists.displayable {
+                                        ui.select_playlist_region()
                                     } else {
                                         ui.select_list_region()
                                     }
@@ -515,6 +692,7 @@ impl Region {
                 KeyModifiers::CONTROL => match key.code {
                     KeyCode::Char(c) => match c {
                         'l' => ui.toggle_lyrics(),
+                        'p' => ui.toggle_playlists(),
                         _ => {}
                     },
                     _ => {}
@@ -534,9 +712,6 @@ impl Region {
 
     pub async fn handle_list<'a>(ui: &mut UI<'a>, key: &KeyEvent) -> std::io::Result<bool> {
         match ui.mode {
-            ListMode::Search => {
-                ListMode::handle_search(ui, key).await;
-            }
             ListMode::AfterSearch => {
                 if ListMode::handle_after_search(ui, key)
                     .await
@@ -553,6 +728,7 @@ impl Region {
                     return Ok(true);
                 }
             }
+            _ => {}
         }
         Ok(false)
     }
@@ -688,129 +864,43 @@ impl Region {
         }
         Ok(false)
     }
-}
 
-#[derive(Default)]
-pub struct UIStyle {
-    list_style: ListStyle,
-    action_style: ActionStyle,
-    seeker_style: SeekerStyle,
-    volume_style: VolumeStyle,
-    lyrics_style: LyricsStyle,
-}
-
-pub struct ListStyle {
-    hilight_color: Color,
-    active_region_color: Color,
-    active_search_region_color: Color,
-    active_after_search_region_color: Color,
-    passive_region_color: Color,
-    selector: String,
-    playing_selector: String,
-    playing_region_color: Color,
-}
-
-pub struct SeekerStyle {
-    active_region_color: Color,
-    passive_region_color: Color,
-    fg_seeker_color: Color,
-    bg_seeker_color: Color,
-}
-
-pub struct VolumeStyle {
-    active_region_color: Color,
-    passive_region_color: Color,
-    fg_volume_color: Color,
-    bg_volume_color: Color,
-}
-
-pub struct LyricsStyle {
-    active_region_color: Color,
-    passive_region_color: Color,
-    selector: String,
-}
-
-pub struct ActionStyle {
-    hilight_color: Color,
-    active_region_color: Color,
-    passive_region_color: Color,
-}
-
-impl Default for ListStyle {
-    fn default() -> Self {
-        ListStyle {
-            hilight_color: Color::default(),
-            playing_region_color: Color::Gray,
-            active_region_color: Color::Magenta,
-            active_after_search_region_color: Color::Cyan,
-            active_search_region_color: Color::DarkGray,
-            passive_region_color: Color::default(),
-            selector: String::from(">>"),
-            playing_selector: String::from("*"),
+    async fn handle_playlist(ui: &mut UI<'_>, key: &KeyEvent) -> std::io::Result<bool> {
+        if key.kind == event::KeyEventKind::Press {
+            match key.modifiers {
+                KeyModifiers::NONE => match key.code {
+                    KeyCode::Char(c) => match c {
+                        'q' => return ui.quit(),
+                        'j' => ui.select_next_playlist_name(),
+                        'k' => ui.select_previous_playlist_name(),
+                        _ => {}
+                    },
+                    KeyCode::Enter => {
+                        ui.switch_to_selected_playlist().await;
+                    }
+                    _ => {}
+                },
+                _ => {}
+            }
         }
+        return Ok(false);
     }
-}
 
-impl UIStyle {
-    #[allow(dead_code)]
-    pub fn new(
-        list_style: ListStyle,
-        action_style: ActionStyle,
-        seeker_style: SeekerStyle,
-        volume_style: VolumeStyle,
-        lyrics_style: LyricsStyle,
-    ) -> Self {
-        UIStyle {
-            list_style,
-            action_style,
-            seeker_style,
-            volume_style,
-            lyrics_style,
+    async fn handle_search(ui: &mut UI<'_>, key: &KeyEvent) -> std::io::Result<bool> {
+        match ui.mode {
+            ListMode::Search => {
+                ListMode::handle_search(ui, key).await;
+            }
+            _ => {}
         }
+        // Never quit on search mode
+        Ok(false)
     }
-}
 
-impl Default for SeekerStyle {
-    fn default() -> Self {
-        SeekerStyle {
-            active_region_color: Color::Magenta,
-            passive_region_color: Color::default(),
-            fg_seeker_color: Color::Gray,
-            bg_seeker_color: Color::Black,
-        }
-    }
-}
-
-impl Default for VolumeStyle {
-    fn default() -> Self {
-        VolumeStyle {
-            active_region_color: Color::Magenta,
-            passive_region_color: Color::default(),
-            fg_volume_color: Color::Gray,
-            bg_volume_color: Color::Black,
-        }
-    }
-}
-
-impl Default for ActionStyle {
-    fn default() -> Self {
-        ActionStyle {
-            hilight_color: Color::Yellow,
-            active_region_color: Color::Magenta,
-            passive_region_color: Color::default(),
-        }
-    }
-}
-
-impl Default for LyricsStyle {
-    fn default() -> Self {
-        LyricsStyle {
-            active_region_color: Color::Magenta,
-            passive_region_color: Color::default(),
-            selector: String::from(">>"),
-            // hilight_color: Color::default(),
-            // playing_region_color: Color::Gray,
-            // playing_selector: String::from("*"),
+    async fn handle_command(ui: &mut UI<'_>, key: &KeyEvent) -> std::io::Result<bool> {
+        match ui.mode {
+            ListMode::Command => ListMode::handle_command(ui, key).await,
+            _ => Ok(false),
         }
     }
 }
@@ -958,11 +1048,13 @@ impl<'a> UI<'a> {
             state: State::new(proxy),
             mode: ListMode::default(),
             search_bufr: Input::default(),
+            command_bufr: Input::default(),
             anticipation_mode: AncitipationMode::default(),
             displayed_repeat: Repeat::default(),
             displayed_sort: Sort::default(),
-            fps_controller: FPSController::default(),
             displayed_lyrics: DisplayedLyrics::default(),
+            displayed_playlists: DisplayedPlaylists::default(),
+            fps_controller: FPSController::default(),
             geometry: ViewGeometry::default(Rect::default()),
             internal_clock: tokio::time::interval(Duration::from_secs(1)),
             lua,
@@ -974,6 +1066,7 @@ impl<'a> UI<'a> {
         let paused_stream = self.state.dbus_streams.paused_stream.as_mut().unwrap();
         let resumed_stream = self.state.dbus_streams.resumed_stream.as_mut().unwrap();
         let stopped_stream = self.state.dbus_streams.stopped_stream.as_mut().unwrap();
+        let playlist_updated_stream = self.state.dbus_streams.playlist_updated.as_mut().unwrap();
         let volume_stream = self
             .state
             .dbus_streams
@@ -986,7 +1079,45 @@ impl<'a> UI<'a> {
             .music_played_stream
             .as_mut()
             .unwrap();
+        let playlist_created_stream = self.state.dbus_streams.playlist_created.as_mut().unwrap();
+        let playlist_deleted_stream = self.state.dbus_streams.playlist_deleted.as_mut().unwrap();
+        let playlist_loaded_stream = self.state.dbus_streams.playlist_loaded.as_mut().unwrap();
         let sorted_stream = self.state.dbus_streams.sorted_stream.as_mut().unwrap();
+
+        match playlist_updated_stream.poll_next_unpin(&mut ctx) {
+            Poll::Ready(_) => {
+                let playlist = self.state.proxy.playlist().await.unwrap_or_default();
+                self.music_list.unfiltered_music_list.clear();
+                for (index, music) in playlist.musics.iter().enumerate() {
+                    let music = music.to_owned();
+                    self.music_list.unfiltered_music_list.push(Music {
+                        path: music.path,
+                        title: music.title,
+                        length: music.length,
+                        artist: music.artist,
+                        genre: music.genre,
+                        index,
+                    });
+                }
+                self.music_list.musics = self.music_list.unfiltered_music_list.clone();
+                self.music_list.playing_index = playlist.playing_index as usize;
+                self.state.batch.metadata = self.state.proxy.metadata().await.unwrap_or_default();
+
+                let timer = self.state.proxy.timer().await.unwrap_or_default();
+                let played = timer.0;
+                let full = timer.1;
+                (
+                    self.state.batch.played_duration,
+                    self.state.batch.music_duration,
+                ) = (
+                    Duration::from_secs_f32(played),
+                    Duration::from_secs_f32(full),
+                );
+                self.state.batch.playing_music =
+                    self.state.proxy.playing().await.unwrap_or_default();
+            }
+            _ => {}
+        }
 
         match paused_stream.poll_next_unpin(&mut ctx) {
             Poll::Ready(_) => {
@@ -1025,6 +1156,69 @@ impl<'a> UI<'a> {
             Poll::Ready(v) => {
                 let volume = v.unwrap().args().unwrap().amount.max(0.0).min(1.0);
                 self.state.batch.volume = volume;
+            }
+            _ => {}
+        }
+
+        match playlist_created_stream.poll_next_unpin(&mut ctx) {
+            Poll::Ready(v) => {
+                self.state
+                    .batch
+                    .playlists_names
+                    .push(v.unwrap().args().unwrap().id().to_string());
+            }
+            _ => {}
+        }
+
+        match playlist_deleted_stream.poll_next_unpin(&mut ctx) {
+            Poll::Ready(v) => {
+                let id = v.unwrap().args().unwrap().id().to_string();
+                if let Some(pos) = self
+                    .state
+                    .batch
+                    .playlists_names
+                    .iter()
+                    .position(|x| x.eq(&id))
+                {
+                    self.state.batch.playlists_names.remove(pos);
+                }
+            }
+            _ => {}
+        }
+
+        match playlist_loaded_stream.poll_next_unpin(&mut ctx) {
+            Poll::Ready(_) => {
+                self.state.batch.status = PlayingStatus::Stopped;
+
+                let playlist = self.state.proxy.playlist().await.unwrap_or_default();
+                self.music_list.unfiltered_music_list.clear();
+                for (index, music) in playlist.musics.iter().enumerate() {
+                    let music = music.to_owned();
+                    self.music_list.unfiltered_music_list.push(Music {
+                        path: music.path,
+                        title: music.title,
+                        length: music.length,
+                        artist: music.artist,
+                        genre: music.genre,
+                        index,
+                    });
+                }
+                self.music_list.musics = self.music_list.unfiltered_music_list.clone();
+                self.music_list.playing_index = playlist.playing_index as usize;
+                self.state.batch.metadata = self.state.proxy.metadata().await.unwrap_or_default();
+
+                let timer = self.state.proxy.timer().await.unwrap_or_default();
+                let played = timer.0;
+                let full = timer.1;
+                (
+                    self.state.batch.played_duration,
+                    self.state.batch.music_duration,
+                ) = (
+                    Duration::from_secs_f32(played),
+                    Duration::from_secs_f32(full),
+                );
+                self.state.batch.playing_music =
+                    self.state.proxy.playing().await.unwrap_or_default();
             }
             _ => {}
         }
@@ -1204,6 +1398,10 @@ impl<'a> UI<'a> {
 
         let block = match self.region {
             Region::List => match self.mode {
+                ListMode::Command => Block::default()
+                    .title("Musics")
+                    .borders(Borders::ALL)
+                    .fg(self.style.list_style.active_command_region_color),
                 ListMode::Search => Block::default()
                     .title("Musics")
                     .borders(Borders::ALL)
@@ -1235,20 +1433,6 @@ impl<'a> UI<'a> {
                 Row::new(vec!["Title", "artist", "genre", "duration"])
                     .style(Style::new().bold().italic()),
             );
-
-        match self.mode {
-            ListMode::Search | ListMode::AfterSearch => match self.geometry.search_geo() {
-                Some(geo) => {
-                    frame.render_widget(
-                        Paragraph::new(self.search_bufr.value())
-                            .block(Block::bordered().title("Querry")),
-                        geo,
-                    );
-                }
-                None => {}
-            },
-            ListMode::Select => {}
-        }
 
         frame.render_stateful_widget(table, self.geometry.list_geo(), &mut self.music_list.state);
     }
@@ -1291,6 +1475,10 @@ impl<'a> UI<'a> {
                     .title("Musics")
                     .borders(Borders::ALL)
                     .fg(self.style.list_style.active_region_color),
+                ListMode::Command => Block::default()
+                    .title("Musics")
+                    .borders(Borders::ALL)
+                    .fg(self.style.list_style.active_command_region_color),
             },
             _ => Block::default()
                 .title("Musics")
@@ -1311,6 +1499,16 @@ impl<'a> UI<'a> {
             );
 
         match self.mode {
+            ListMode::Command => match self.geometry.command_geo() {
+                Some(geo) => {
+                    frame.render_widget(
+                        Paragraph::new(self.command_bufr.value())
+                            .block(Block::bordered().title("Querry")),
+                        geo,
+                    );
+                }
+                None => {}
+            },
             ListMode::Search | ListMode::AfterSearch => match self.geometry.search_geo() {
                 Some(geo) => {
                     frame.render_widget(
@@ -1557,7 +1755,10 @@ impl<'a> UI<'a> {
     pub fn render(&mut self, frame: &mut Frame) {
         self.update_geometry(frame);
         self.render_list(frame);
+        self.render_search(frame);
         self.render_lyrics(frame);
+        self.render_playlists(frame);
+        self.render_commands(frame);
         self.render_actions(frame);
         self.render_volume(frame);
         self.render_seeker(frame);
@@ -1584,18 +1785,24 @@ impl<'a> UI<'a> {
         let quesize = self.music_list.musics.len();
         let selected_index = self.music_list.selected;
 
-        if selected_index == quesize - 1 {
+        if Some(selected_index) == quesize.checked_sub(1) {
             self.music_list.selected = 0;
         } else {
             self.music_list.selected = self.music_list.selected + 1;
         }
     }
 
-    /// Appends the char to the existing search querry and search it
-    pub async fn register_querry(&mut self, c: KeyEvent) {
+    /// Appends the char to the existing search buffer
+    pub async fn register_search_query(&mut self, c: KeyEvent) {
         self.search_bufr
             .handle_event(&crossterm::event::Event::Key(c));
         self.music_list.search(self.search_bufr.value().to_owned());
+    }
+
+    /// Appends the char to the existing command buffer
+    pub async fn register_command_query(&mut self, c: KeyEvent) {
+        self.command_bufr
+            .handle_event(&crossterm::event::Event::Key(c));
     }
 
     /// Resets the search querry to an empty string
@@ -1729,6 +1936,14 @@ impl<'a> UI<'a> {
             Some(self.state.proxy.receive_volume_changed().await.unwrap());
         self.state.dbus_streams.sorted_stream =
             Some(self.state.proxy.receive_sorted().await.unwrap());
+        self.state.dbus_streams.playlist_updated =
+            Some(self.state.proxy.receive_playlists_updated().await.unwrap());
+        self.state.dbus_streams.playlist_loaded =
+            Some(self.state.proxy.receive_playlist_loaded().await.unwrap());
+        self.state.dbus_streams.playlist_deleted =
+            Some(self.state.proxy.receive_playlist_deleted().await.unwrap());
+        self.state.dbus_streams.playlist_created =
+            Some(self.state.proxy.receive_playlist_created().await.unwrap());
         //----------------------------------------------------
         //TODO: make this something more readable
         self.displayed_repeat = self.state.get_repeat();
@@ -1754,39 +1969,19 @@ impl<'a> UI<'a> {
         // FIXME: prefor sorts?
         match self.action {
             PowerActions::Sort => match self.displayed_sort {
-                Sort::ByTitleAscending => {
-                    self.displayed_sort = Sort::Shuffle;
-                }
-                Sort::ByTitleDescending => {
-                    self.displayed_sort = Sort::ByTitleAscending;
-                }
-                Sort::ByDurationAscending => {
-                    self.displayed_sort = Sort::ByTitleDescending;
-                }
-                Sort::ByDurationDescending => {
-                    self.displayed_sort = Sort::ByDurationAscending;
-                }
-                Sort::ArtistAscending => {
-                    self.displayed_sort = Sort::ByDurationDescending;
-                }
-                Sort::ArtistDescending => {
-                    self.displayed_sort = Sort::ArtistAscending;
-                }
-                Sort::Shuffle => {
-                    self.displayed_sort = Sort::ArtistDescending;
-                }
+                Sort::ByTitleAscending => self.displayed_sort = Sort::Shuffle,
+                Sort::ByTitleDescending => self.displayed_sort = Sort::ByTitleAscending,
+                Sort::ByDurationAscending => self.displayed_sort = Sort::ByTitleDescending,
+                Sort::ByDurationDescending => self.displayed_sort = Sort::ByDurationAscending,
+                Sort::ArtistAscending => self.displayed_sort = Sort::ByDurationDescending,
+                Sort::ArtistDescending => self.displayed_sort = Sort::ArtistAscending,
+                Sort::Shuffle => self.displayed_sort = Sort::ArtistDescending,
             },
             // ThisMusic -> AllMusics -> Dont
             PowerActions::Repeat => match self.displayed_repeat {
-                Repeat::SameMusic => {
-                    self.displayed_repeat = Repeat::Dont;
-                }
-                Repeat::AllMusics => {
-                    self.displayed_repeat = Repeat::SameMusic;
-                }
-                Repeat::Dont => {
-                    self.displayed_repeat = Repeat::AllMusics;
-                }
+                Repeat::SameMusic => self.displayed_repeat = Repeat::Dont,
+                Repeat::AllMusics => self.displayed_repeat = Repeat::SameMusic,
+                Repeat::Dont => self.displayed_repeat = Repeat::AllMusics,
             },
             _ => {}
         }
@@ -1834,12 +2029,21 @@ impl<'a> UI<'a> {
         match mode {
             ListMode::Select => {
                 self.geometry.disable_search();
-                self.swap_list_index_to_normal_mode();
+                self.geometry.disable_command();
+                match self.mode {
+                    ListMode::Command => self.swap_list_index_to_normal_from_command(),
+                    ListMode::Search => self.swap_list_index_to_normal_from_search(),
+                    ListMode::AfterSearch => self.swap_list_index_to_normal_from_aftersearch(),
+                    _ => {}
+                }
                 self.reset_querry()
             }
             ListMode::Search => {
                 self.geometry.enable_search();
                 self.swap_list_index_to_search_mode();
+            }
+            ListMode::Command => {
+                self.geometry.enable_command();
             }
             _ => {}
         }
@@ -1940,7 +2144,16 @@ impl<'a> UI<'a> {
         self.region = Region::Lyrics;
     }
 
+    fn select_region(&mut self, region: Region) {
+        self.region = region;
+    }
+
+    fn select_playlist_region(&mut self) {
+        self.region = Region::Playlist;
+    }
+
     fn toggle_lyrics(&mut self) {
+        self.disable_playlists();
         self.displayed_lyrics.displayable = !self.displayed_lyrics.displayable;
         self.geometry.toggle_lyrics();
     }
@@ -2010,46 +2223,19 @@ impl<'a> UI<'a> {
     fn cycle(&mut self) {
         match self.action {
             PowerActions::Sort => match self.displayed_sort {
-                Sort::ByTitleAscending => {
-                    self.displayed_sort = Sort::ByTitleDescending;
-                    // self.music_list.sort(Some(self.sort));
-                }
-                Sort::ByTitleDescending => {
-                    self.displayed_sort = Sort::ByDurationAscending;
-                    // self.music_list.sort(Some(self.sort));
-                }
-                Sort::ByDurationAscending => {
-                    self.displayed_sort = Sort::ByDurationDescending;
-                    // self.music_list.sort(Some(self.sort));
-                }
-                Sort::ByDurationDescending => {
-                    self.displayed_sort = Sort::ArtistAscending;
-                    // self.music_list.sort(Some(self.sort));
-                }
-                Sort::ArtistAscending => {
-                    self.displayed_sort = Sort::ArtistDescending;
-                    // self.music_list.sort(Some(self.sort));
-                }
-                Sort::ArtistDescending => {
-                    self.displayed_sort = Sort::Shuffle;
-                    // self.music_list.sort(Some(self.sort));
-                }
-                Sort::Shuffle => {
-                    self.displayed_sort = Sort::ByTitleAscending;
-                    // self.music_list.sort(Some(self.sort));
-                }
+                Sort::ByTitleAscending => self.displayed_sort = Sort::ByTitleDescending,
+                Sort::ByTitleDescending => self.displayed_sort = Sort::ByDurationAscending,
+                Sort::ByDurationAscending => self.displayed_sort = Sort::ByDurationDescending,
+                Sort::ByDurationDescending => self.displayed_sort = Sort::ArtistAscending,
+                Sort::ArtistAscending => self.displayed_sort = Sort::ArtistDescending,
+                Sort::ArtistDescending => self.displayed_sort = Sort::Shuffle,
+                Sort::Shuffle => self.displayed_sort = Sort::ByTitleAscending,
             },
             // ThisMusic -> AllMusics -> Dont
             PowerActions::Repeat => match self.displayed_repeat {
-                Repeat::SameMusic => {
-                    self.displayed_repeat = Repeat::AllMusics;
-                }
-                Repeat::AllMusics => {
-                    self.displayed_repeat = Repeat::Dont;
-                }
-                Repeat::Dont => {
-                    self.displayed_repeat = Repeat::SameMusic;
-                }
+                Repeat::SameMusic => self.displayed_repeat = Repeat::AllMusics,
+                Repeat::AllMusics => self.displayed_repeat = Repeat::Dont,
+                Repeat::Dont => self.displayed_repeat = Repeat::SameMusic,
             },
             _ => {}
         }
@@ -2059,7 +2245,18 @@ impl<'a> UI<'a> {
         self.state.batch.repeat = self.state.proxy.get_repeat().await.unwrap_or_default();
     }
 
-    fn swap_list_index_to_normal_mode(&mut self) {
+    fn swap_list_index_to_normal_from_command(&mut self) {
+        self.music_list.switch_selected_buffer = self.music_list.selected;
+        self.music_list.switch_selected_buffer = 0
+    }
+
+    fn swap_list_index_to_normal_from_aftersearch(&mut self) {
+        self.music_list.switch_selected_buffer = self.music_list.selected;
+        self.music_list.selected = 0;
+        self.music_list.switch_selected_buffer = 0
+    }
+
+    fn swap_list_index_to_normal_from_search(&mut self) {
         self.music_list.switch_selected_buffer = self.music_list.selected;
         self.music_list.selected = 0;
         self.music_list.switch_selected_buffer = 0
@@ -2069,46 +2266,212 @@ impl<'a> UI<'a> {
         self.music_list.selected = self.music_list.switch_selected_buffer;
         self.music_list.switch_selected_buffer = 0
     }
-}
 
-#[derive(
-    PartialEq,
-    Eq,
-    Debug,
-    Ord,
-    PartialOrd,
-    Clone,
-    serde::Serialize,
-    serde::Deserialize,
-    zbus::zvariant::Type,
-)]
-pub struct Music {
-    pub title: String,
-    pub length: Duration,
-    pub path: FilePath<'static>,
-    pub artist: String,
-    pub genre: String,
-    pub index: usize,
-}
+    fn disable_playlists(&mut self) {
+        self.displayed_playlists.displayable = false;
+        self.geometry.disable_playlists();
+    }
 
-impl Default for Music {
-    fn default() -> Self {
-        Self {
-            title: String::new(),
-            length: Duration::ZERO,
-            path: FilePath::default(),
-            artist: String::new(),
-            genre: String::new(),
-            index: 0,
+    fn disable_lyrics(&mut self) {
+        self.displayed_lyrics.displayable = false;
+        self.geometry.disable_lyrics();
+    }
+
+    fn toggle_playlists(&mut self) {
+        self.disable_lyrics();
+        self.displayed_playlists.displayable = !self.displayed_playlists.displayable;
+        self.geometry.toggle_playlists();
+    }
+
+    fn render_playlists(&mut self, frame: &mut Frame<'_>) {
+        if self.displayed_playlists.displayable {
+            match self.geometry.playlists_geo() {
+                Some(geo) => {
+                    let names = self.state.playlist_names();
+
+                    let names = names
+                        .iter()
+                        .map(|v| Row::new(vec![v.as_str()]))
+                        .collect::<Vec<Row<'_>>>();
+
+                    let widths = [Constraint::Fill(4)];
+
+                    let style = match self.region {
+                        Region::Lyrics => {
+                            Style::new().fg(self.style.playlists_style.active_region_color)
+                        }
+                        _ => Style::new().fg(self.style.playlists_style.passive_region_color),
+                    };
+
+                    let block = match self.region {
+                        Region::Playlist => Block::default()
+                            .title("Playlists")
+                            .borders(Borders::ALL)
+                            .fg(self.style.playlists_style.active_region_color),
+                        _ => Block::default()
+                            .title("Playlists")
+                            .borders(Borders::ALL)
+                            .fg(self.style.playlists_style.passive_region_color),
+                    };
+
+                    let table = Table::new(names, widths)
+                        .block(block)
+                        .style(style)
+                        .highlight_symbol(self.style.playlists_style.selector.as_str())
+                        .highlight_style(
+                            Style::new()
+                                .add_modifier(Modifier::REVERSED)
+                                .fg(self.style.list_style.hilight_color),
+                        );
+                    frame.render_stateful_widget(table, geo, &mut self.displayed_playlists.state)
+                }
+                None => {}
+            }
         }
     }
-}
 
-#[derive(PartialEq, Eq, Debug, Ord, PartialOrd, Clone, Default)]
-// #[derive(serde::Serialize, serde::Deserialize, zbus::zvariant::Type)]
-pub struct Line {
-    content: String,
-    timestamp: Duration,
+    fn select_next_playlist_name(&mut self) {
+        self.displayed_playlists.state.select_next();
+    }
+
+    fn select_previous_playlist_name(&mut self) {
+        self.displayed_playlists.state.select_previous();
+    }
+
+    async fn switch_to_selected_playlist(&mut self) {
+        if let Some(index) = self.displayed_playlists.state.selected() {
+            let titles = self.state.playlist_names();
+            let title = titles.get(index).unwrap();
+            let _ = self.state.proxy.use_playlist(title.clone()).await;
+        }
+    }
+
+    fn render_commands(&self, frame: &mut Frame<'_>) {
+        if matches!(self.mode, ListMode::Command) {
+            if let Some(geo) = self.geometry.command_geo() {
+                frame.render_widget(
+                    Paragraph::new(self.command_bufr.value())
+                        .block(Block::bordered().title("Command")),
+                    geo,
+                );
+            }
+        }
+    }
+
+    async fn run_command(&mut self) -> std::io::Result<bool> {
+        let command = self.command_bufr.to_string();
+        let mut commands: Vec<String> = command.split_whitespace().map(|v| v.to_string()).collect();
+        if commands.len() > 0 {
+            let command_name = commands.remove(0);
+            let command_args = commands;
+            match CommandName::from_str(&command_name) {
+                Ok(name) => return self.preform(CommandContext::new(name, command_args)).await,
+                Err(e) => todo!("{:?}", e),
+            }
+        }
+        Ok(false)
+    }
+
+    fn render_search(&self, frame: &mut Frame<'_>) {
+        if matches!(self.mode, ListMode::Search | ListMode::AfterSearch) {
+            if let Some(geo) = self.geometry.search_geo() {
+                frame.render_widget(
+                    Paragraph::new(self.search_bufr.value())
+                        .block(Block::bordered().title("Querry")),
+                    geo,
+                );
+            }
+        }
+    }
+
+    async fn preform(&mut self, context: CommandContext) -> Result<bool, io::Error> {
+        let args = context.args;
+        if args.len() > context.name.number_of_required_args() {
+            return Err(std::io::Error::other("Too many arguments"));
+        } else if args.len() < context.name.number_of_required_args() {
+            return Err(std::io::Error::other("Few arguments"));
+        }
+        match context.name {
+            CommandName::Play => {
+                // guarded by upper if check
+                let direction = args.get(0).unwrap();
+                match direction.as_str() {
+                    "previous" => self.play_preivous().await,
+                    "next" => self.play_next().await,
+                    _ => {}
+                }
+            }
+            CommandName::Move => {
+                // guarded by upper if check
+                let direction = args.get(0).unwrap();
+                match direction.as_str() {
+                    "up" => self.list_up(),
+                    "down" => self.list_down(),
+                    _ => {}
+                }
+            }
+            CommandName::AddToPlaylist => {
+                let name = args.get(0).unwrap();
+                self.add_selected_to_playlist(name).await;
+            }
+            CommandName::Quit => return Ok(true),
+            CommandName::CreatePlaylist => {
+                let name = args.get(0).unwrap();
+                self.crate_playlist(name).await;
+            }
+            CommandName::ToggleMute => self.toggle_mute().await,
+            CommandName::Pause => self.state.pause_stream(),
+            CommandName::Resume => self.state.resume_stream(),
+            CommandName::Reload => self.reload().await,
+            CommandName::RenamePlaylist => {
+                let old = args.get(0).unwrap();
+                let new = args.get(1).unwrap();
+                self.rename_playlist(old, new).await;
+            }
+            CommandName::RemovePlaylist => {
+                let name = args.get(0).unwrap();
+                self.remove_playlist(name).await;
+            }
+        }
+        Ok(false)
+    }
+
+    async fn add_selected_to_playlist(&self, destination: &String) {
+        let index = self
+            .music_list
+            .musics
+            .get(self.music_list.selected)
+            .unwrap()
+            .index;
+
+        let source = self.state.proxy.get_playlist_name().await.unwrap();
+
+        self.state
+            .proxy
+            .save_to_playlist(index, source.clone(), destination.clone())
+            .await
+            .unwrap();
+    }
+
+    async fn crate_playlist(&self, name: &String) {
+        self.state
+            .proxy
+            .create_playlist(name.clone())
+            .await
+            .unwrap();
+    }
+
+    async fn rename_playlist(&self, old: &str, new: &str) {
+        self.state.proxy.rename_playlist(old, new).await.unwrap();
+    }
+
+    async fn remove_playlist(&self, name: &str) {
+        self.state.proxy.remove_playlist(name).await.unwrap();
+    }
+
+    async fn reload(&self) {
+        self.state.proxy.reload_config().await.unwrap();
+    }
 }
 
 #[derive(PartialEq, Eq, Debug, Clone)]
@@ -2120,7 +2483,25 @@ pub struct DisplayedLyrics {
     state: TableState,
     /// Lyrics
     lyrics: Lyrics,
+    /// Used to sync current lyrics line with the audio
     pub last_active_interaction: Instant,
+}
+
+#[derive(Debug, Clone)]
+pub struct DisplayedPlaylists {
+    /// Used to toggle playlists view
+    displayable: bool,
+    /// State/Index of the playlist list pointer
+    state: TableState,
+}
+
+impl Default for DisplayedPlaylists {
+    fn default() -> Self {
+        Self {
+            displayable: false,
+            state: TableState::default(),
+        }
+    }
 }
 
 impl Default for DisplayedLyrics {
@@ -2143,7 +2524,8 @@ pub struct Musics {
     pub musics: Vec<Music>,
     /// index of the currently *selected* music in the displayed music list
     pub selected: usize,
-    /// buffer used to switch between selected index values
+    /// Buffer used to switch between selected index values
+    /// Holds the previously selected index
     /// search/aftersearch <===> normal
     pub switch_selected_buffer: usize,
     pub state: TableState,
@@ -2155,7 +2537,7 @@ pub struct Musics {
 }
 
 impl Musics {
-    /// search the music list wit respect to the search buffer and
+    /// search the music list
     pub fn search(&mut self, search_bufr: String) {
         let n = 20;
         let paire = search_bufr.split_once(":");
@@ -2184,15 +2566,11 @@ impl Musics {
                 }
             }
             None => {
-                if search_bufr.is_empty() {
-                    // self.musics = self.full_que.clone();
-                } else {
-                    self.musics = fuzzy_search::fuzzy_search_music_titles_best_n(
-                        &search_bufr,
-                        &self.unfiltered_music_list,
-                        n,
-                    );
-                }
+                self.musics = fuzzy_search::fuzzy_search_music_titles_best_n(
+                    &search_bufr,
+                    &self.unfiltered_music_list,
+                    n,
+                );
             }
         }
     }
@@ -2217,7 +2595,6 @@ pub enum PowerActions {
     Stop,
 }
 
-//  TODO: use the '<command>: <arg>' for commands
 #[derive(Deserialize, Serialize, Clone, Copy)]
 enum Kmodifier {
     SHIFT,
