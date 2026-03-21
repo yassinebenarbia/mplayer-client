@@ -1,50 +1,34 @@
 {
+  # description = "flake file";
+
   inputs = {
-    naersk.url = "github:nix-community/naersk/master";
-    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
-    utils.url = "github:numtide/flake-utils";
+    nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-unstable";
   };
 
   outputs =
+    { self, nixpkgs, ... }:
+    let
+      system = "x86_64-linux";
+      pkgs = import nixpkgs { inherit system; };
+    in
     {
-      self,
-      nixpkgs,
-      utils,
-      naersk,
-    }:
-    utils.lib.eachDefaultSystem (
-      system:
-      let
-        naersk-lib = pkgs.callPackage naersk { };
-        pkgs = import <nixpkgs-unstable> { };
-      in
-      {
-        defaultPackage = naersk-lib.buildPackage {
-          name = "mplayer-client";
-          src = ./.;
-          buildInputs = with pkgs; [
-            pkg-config
-            luajit
-            luajitPackages.ldbus
-            rustc
-          ];
-        };
-        devShell =
-          with pkgs;
-          mkShell {
-            buildInputs = [
-              pkg-config
-              luajit
-              rustc
-              rustfmt
-              lsd
-              luajitPackages.ldbus
-            ];
-            shellHook = ''
-              export PKG_CONFIG_PATH="$PKG_CONFIG_PATH:${pkgs.luajit}/lib/pkgconfig"
-              alias ls="lsd"
-            '';
-          };
-      }
-    );
+      devShells.${system}.default = pkgs.mkShell {
+        buildINputs = with pkgs; [
+          pkg-config
+          luajit
+          luajitPackages.ldbus
+          rustc
+        ];
+        nativeBuildInputs = with pkgs; [
+          pkg-config
+          luajit
+          rustc
+          rustfmt
+          lsd
+          luajitPackages.ldbus
+        ];
+        shellHook = ''echo "Welcome!"'';
+
+      };
+    };
 }
