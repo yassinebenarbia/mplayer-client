@@ -412,6 +412,7 @@ impl ListMode {
             match key.modifiers {
                 KeyModifiers::NONE => match key.code {
                     KeyCode::Enter => {
+                        ui.select_region(Region::List);
                         ui.play_selected_music().await;
                         ui.reset_querry();
                         ui.mode = ListMode::Select;
