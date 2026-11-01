@@ -1,3 +1,5 @@
+
+
 <h1 align="center">mplayer-client</h1>
 
 Simple terminal based [DBus](https://www.freedesktop.org/wiki/Software/dbus/#whatisd-bus) client for the [_mplayer-server_](https://github.com/yassinebenarbia/mplayer-server) written in [Rust](https://www.rust-lang.org)
@@ -21,7 +23,7 @@ ___
 # Usage
 - Install the [mplayer-server](https://github.com/yassinebenarbia/mplayer-server).
 - Run the `mplayer-server`.
-- Install this client by cloning this repo and `cargo install --path ./mplayer-client`.
+- Install this client by cloning this repo and `cargo install --path .`.
 - Modify [config file](./config.example.toml) to your liking (optional) .
 - Run the `mplayer-client`
 >[!NOTE]
